@@ -24,6 +24,9 @@ const PHYS_DT = 1 / 240;
 const WIND_FROM = 285 * DEG, WIND_KT = 12;
 const WIND = [-Math.sin(WIND_FROM) * WIND_KT * KT, 0, Math.cos(WIND_FROM) * WIND_KT * KT];
 const SUN = vnorm([-0.45, 0.72, 0.52]);
+// the shadow is cast from high overhead (same azimuth as the sun) so, like the Amiga
+// original's, it sits nearly under the jet and closes up as you touch down
+const SHADOW_DIR = vnorm([-0.45 * 0.3, 1, 0.52 * 0.3]);
 
 const VIEWS = ['COCKPIT', 'HUD', 'CHASE', 'ORBIT', 'TOWER', 'FLY-BY', 'LSO', 'CARRIER'];
 const BASES = {
@@ -694,7 +697,7 @@ class Game {
     if (visible) {
       this.hornet.draw(R, ac.q, ac.pos, ac);
     }
-    if (ac.state !== 'crashed' && (ac.radarAlt ?? 999) < 400 && !this.inside) this.drawShadow();
+    if (ac.state !== 'crashed' && (ac.radarAlt ?? 999) < 400) this.drawShadow();
     R.drawLines(this.terrain.lines, R.relWorld(), { bias: 0.0045, detailFar: 9000, terrain: true });
     R.drawLines(this.terrain.skirtLines, R.relWorld(), { bias: 0.004, detailFar: 30000, terrain: true });
     R.drawLines(this.scenery.lines, R.relWorld(), { bias: 0.004 });
@@ -719,13 +722,18 @@ class Game {
 
   drawShadow() {
     const R = this.R, ac = this.ac;
-    const s = this.surface(ac.pos);
-    if (ac.pos[1] - s.y > 400) return;
+    const L = SHADOW_DIR;
+    const s0 = this.surface(ac.pos);
+    const h = ac.pos[1] - s0.y;
+    if (h > 400) return;
+    // find the surface where the shadow actually falls (deck, sea or land)
+    const k = h / L[1];
+    const sp = [ac.pos[0] - L[0] * k, Math.min(ac.pos[1], Math.max(s0.y, 0) + 30), ac.pos[2] - L[2] * k];
+    const s = this.surface(sp);
     const n = s.n;
     const c = this.cam.pos;
-    const p0 = [ac.pos[0] - c[0], s.y - c[1], ac.pos[2] - c[2]];
-    const L = SUN;
-    const d = n[0] * p0[0] + n[1] * p0[1] + n[2] * p0[2] + 0.06;
+    const p0 = [sp[0] - c[0], s.y - c[1], sp[2] - c[2]];
+    const d = n[0] * p0[0] + n[1] * p0[1] + n[2] * p0[2] + (s.kind === 'land' ? 0.2 : 0.06);   // runways are drawn 8 cm above the terrain
     const nl = n[0] * L[0] + n[1] * L[1] + n[2] * L[2];
     const S = new Float32Array(16);
     for (let col = 0; col < 3; col++) for (let row = 0; row < 3; row++) S[col * 4 + row] = (row === col ? 1 : 0) - (L[row] * n[col]) / nl;
