@@ -126,9 +126,17 @@ class Game {
     requestAnimationFrame((t) => this.frame(t));
   }
 
-  onClick() {
+  onClick(e) {
     if (this.state === 'boot') { this.boot(); return; }
-    if (this.state === 'title') { this.startFlight(); return; }
+    if (this.state === 'title') {
+      // clicking a start point button selects it; anywhere else starts the flight
+      const r = this.canvas.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      const hit = (this.titleOpts || []).find((o) => mx >= o.x && mx <= o.x + o.w && my >= o.y && my <= o.y + o.h);
+      if (hit) { if (hit.base !== this.base) this.selectBase(hit.base); return; }
+      this.startFlight();
+      return;
+    }
     if (this.state === 'flight' && this.mouseFlight && !this.input.mouse.locked && !this.paused) this.input.lockMouse();
   }
   boot() {
@@ -146,6 +154,12 @@ class Game {
     this.msg(BASES[this.base].name, 'big');
     if (this.base === 'moffett') this.later(1.2, () => this.msg('PARKING BRAKE SET  ·  THROTTLE TO MIL (+)  ·  C RELEASES BRAKES  ·  ROTATE AT 145 KT', 'hint', 8));
     else this.later(1.2, () => this.msg('THROTTLE TO MIL (+)  ·  FLAPS HALF  ·  PRESS C TO LAUNCH', 'hint', 7));
+  }
+  selectBase(b) {
+    this.settings.base = b;
+    this.saveSettings();
+    this.respot();
+    this.audio.play('click', { gain: 0.4, ch: 0 });
   }
   get base() { return BASES[this.settings.base] ? this.settings.base : 'cv'; }
 
@@ -242,10 +256,7 @@ class Game {
       if (this.state === 'title') {
         if (c === 'Enter' || c === 'Space' || c === 'Pad0' || c === 'Pad9') this.startFlight();
         else if (c === 'ArrowLeft' || c === 'ArrowRight' || c === 'ArrowUp' || c === 'ArrowDown' || c === 'Pad14' || c === 'Pad15') {
-          this.settings.base = this.base === 'cv' ? 'moffett' : 'cv';
-          this.saveSettings();
-          this.respot();
-          this.audio.play('click', { gain: 0.4, ch: 0 });
+          this.selectBase(this.base === 'cv' ? 'moffett' : 'cv');
         } else this.optionKey(c, k.shift);
         continue;
       }
@@ -852,10 +863,10 @@ class Game {
     }
     d.text('F/A-18', W / 2, ty - sz * 0.55, sz * 0.4, cyan, 'center', 2);
     d.text('BAY AREA  ·  CARRIER QUALIFICATION', W / 2, ty + sz * 1.25, sz * 0.24, cyan, 'center', 1.5);
-    // menu panel
+    // menu panel: sized to fit its text (shrinks the font on narrow screens)
     const lines = [
       ['ENTER / CLICK', 'START SOLO FLIGHT'],
-      ['ARROWS', 'START POINT:  ' + (this.base === 'cv' ? '> CVN-68 CATAPULT 1 <   NAS MOFFETT RWY 32R' : '  CVN-68 CATAPULT 1   > NAS MOFFETT RWY 32R <')],
+      ['LEFT / RIGHT', null],                       // start point selector
       ['', ''],
       ['ARROWS', 'STICK  (DOWN = PULL)   Z / X  RUDDER'],
       ['+ / -', 'THROTTLE (STOPS AT MIL, PRESS AGAIN FOR AB)'],
@@ -870,15 +881,44 @@ class Game {
       ['N  J  SHIFT+I', 'SOUND  /  RADIO VOICES  /  INVERT PITCH'],
       ['R  P', 'RESPOT AT START POINT  /  PAUSE'],
     ];
-    const lh = clamp(H * 0.03, 14, 22);
-    const bw = Math.min(W * 0.8, 760), bx = W / 2 - bw / 2, by = H * 0.36;
-    d.fillRect(bx, by - 14, bw, lines.length * lh + 26, [0, 0.02, 0.06, 0.62]);
-    d.rect(bx, by - 14, bw, lines.length * lh + 26, [0.4, 0.7, 1, 0.6], 1.2);
+    const opts = [['cv', 'CVN-68 CATAPULT 1'], ['moffett', 'NAS MOFFETT RWY 32R']];
+    let lh = clamp(H * 0.03, 14, 22);
+    const pad = 22, gap = 1.2, optPad = 0.7;      // gaps in units of font size
+    const widths = (fs) => {
+      const kw = Math.max(...lines.map(([k]) => d.tw(k, fs)));
+      const optW = opts.map(([, n]) => d.tw(n, fs) + 2 * optPad * fs);
+      const vw = Math.max(...lines.map(([, v]) => (v ? d.tw(v, fs) : 0)), optW[0] + optW[1] + gap * fs);
+      return { kw, vw, optW, bw: pad * 2 + kw + gap * 1.5 * fs + vw };
+    };
+    let fs = lh * 0.52, m = widths(fs);
+    if (m.bw > W - 32) { fs *= (W - 32 - pad * 2) / (m.bw - pad * 2); lh = fs / 0.52; m = widths(fs); }
+    const rowH = (i) => (i === 1 ? lh * 1.7 : lh);
+    const bh = lines.reduce((a, _, i) => a + rowH(i), 0) + 26;
+    const bw = m.bw, bx = W / 2 - bw / 2, by = H * 0.36;
+    const kx = bx + pad + m.kw, vx = kx + gap * 1.5 * fs;
+    d.fillRect(bx, by - 14, bw, bh, [0, 0.02, 0.06, 0.74]);
+    d.rect(bx, by - 14, bw, bh, [0.4, 0.7, 1, 0.6], 1.2);
+    this.titleOpts = [];
+    let y = by;
     lines.forEach(([k, v], i) => {
-      const y = by + i * lh;
       const pulse = i === 0 ? 0.6 + 0.4 * Math.sin(t * 5) : 1;
-      d.text(k, bx + bw * 0.3, y, lh * 0.52, i === 0 ? [1, 0.8, 0.3, pulse] : gold, 'right', 1.3);
-      d.text(v, bx + bw * 0.34, y, lh * 0.52, i === 0 ? [1, 1, 1, pulse] : i === 1 ? cyan : white, 'left', 1.3);
+      const ty = i === 1 ? y + lh * 0.35 : y;
+      d.text(k, kx, ty, fs, i === 0 ? [1, 0.8, 0.3, pulse] : gold, 'right', 1.3);
+      if (v !== null) d.text(v, vx, ty, fs, i === 0 ? [1, 1, 1, pulse] : white, 'left', 1.3);
+      else {
+        // start point: two buttons, the chosen one lit
+        let ox = vx;
+        opts.forEach(([b, name], j) => {
+          const w = m.optW[j], h = fs * 2.1, oy = ty - fs * 0.55;
+          const on = this.base === b;
+          if (on) d.fillRect(ox, oy, w, h, [0.25, 0.6, 0.9, 0.35]);
+          d.rect(ox, oy, w, h, on ? [0.6, 0.95, 1, 1] : [0.4, 0.6, 0.8, 0.45], on ? 1.6 : 1);
+          d.text(name, ox + w / 2, ty, fs, on ? white : [0.6, 0.72, 0.85, 0.8], 'center', on ? 1.5 : 1.2);
+          this.titleOpts.push({ x: ox, y: oy, w, h, base: b });
+          ox += w + gap * fs;
+        });
+      }
+      y += rowH(i);
     });
     d.text('A TRIBUTE TO F/A-18 INTERCEPTOR - AMIGA 1988', W / 2, H - 34, 11, [0.6, 0.75, 0.9, 0.8], 'center');
   }
