@@ -367,9 +367,15 @@ class Game {
           if (e.sink > 5.5 && e.kind !== 'water') this.msg('HARD LANDING ' + (e.sink / FT).toFixed(0) + ' FT/S', 'warn');
           break;
         }
+        case 'wireBreak':
+          a.play('trap', { gain: 1, ch: 2, rate: 1.3 });
+          this.msg(`PENDANT PARTED - ${Math.round(e.closure / KT)} KT CLOSURE (LIMIT 150)`, 'warn', 5);
+          this.lso.say('Power! Power! You parted the wire!', 'lso', true);
+          break;
         case 'trap':
           a.play('trap', { gain: 1, ch: 2 });
-          this.msg(e.wire + '-WIRE!', 'big', 3);
+          this.msg(e.wire + '-WIRE!' + (e.hard ? '  HARD TRAP' : ''), 'big', 3);
+          if (e.hard) this.msg(`ENGAGED AT ${Math.round(e.closure / KT)} KT - CLOSE TO THE 150 KT GEAR LIMIT`, 'warn', 4);
           this.lso.onTrap(e.wire, ac, this.cv);
           break;
         case 'trapStop':

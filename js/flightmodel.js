@@ -137,9 +137,22 @@ export class Aircraft {
     const lin = 1 - smoothstep(14, 26, Math.abs(a));
     cl *= 1 + (interp(CLA_MACH, mach) - 1) * lin;
     // trailing-edge flaps + drooped ailerons
-    cl += 0.70 * flap * lerp(1, 0.35, smoothstep(12, 32, Math.abs(a))) * (Math.abs(a) < 90 ? 1 : 0);
+    // flaps keep roughly half their increment up to the stall: CLmax ~2.0 with FULL flaps
+    cl += 0.70 * flap * lerp(1, 0.5, smoothstep(15, 35, Math.abs(a))) * (Math.abs(a) < 90 ? 1 : 0);
     return cl;
   }
+  // total lift / drag coefficients for a configuration (shared by the sim and analysis tools)
+  // ge: ground-effect factor 0..1
+  static aero(aDeg, mach, flap, gear, sb, hookDown, ge = 0) {
+    let CL = Aircraft.CL(aDeg, mach, flap) * (1 + 0.06 * ge);
+    const CD0 = interp(CD0_TAB, mach) + 0.025 * gear + 0.05 * flap * flap + 0.012 * flap + 0.07 * sb + 0.002 * (hookDown ? 1 : 0);
+    const K = interp(K_TAB, mach) * (1 - 0.45 * ge);
+    // induced drag at all AoA, plus separated-flow drag that grows smoothly beyond ~11 deg (LEX keeps flow attached)
+    // (F/A-18 high-alpha data: CD ~0.3 @ 20, ~0.75 @ 35, ~1.1 @ 50 deg)
+    const sep = Math.sin(Math.max(0, Math.abs(aDeg) - 11) * DEG);
+    return { CL, CD: CD0 + K * CL * CL + 2.0 * sep * sep };
+  }
+
   // invert lift curve on its linear region
   static alphaForCL(cl, mach, flap) {
     // bisection on the monotonic part of the real lift curve (-14..35 deg)
@@ -204,15 +217,10 @@ export class Aircraft {
 
     // ---- coefficients
     const flap = this.flap;
-    let CL = Aircraft.CL(aD, M, flap);
     const ge = hge < 1 ? (1 - hge) * (1 - hge) : 0;
-    CL *= 1 + 0.06 * ge;
-    const CD0 = interp(CD0_TAB, M) + 0.025 * this.gear + 0.05 * flap * flap + 0.012 * flap + 0.07 * this.sb + 0.002 * (this.hookAng > 0.2 ? 1 : 0);
-    const K = interp(K_TAB, M) * (1 - 0.45 * ge);
-    const sa = Math.sin(a);
-    const blend = smoothstep(15, 32, Math.abs(aD));
-    const CDi = lerp(K * CL * CL, 1.25 * sa * sa + 0.03 + 0.05 * flap, blend);
-    let CD = CD0 + CDi + 0.6 * Math.sin(be) * Math.sin(be);
+    const co = Aircraft.aero(aD, M, flap, this.gear, this.sb, this.hookAng > 0.2, ge);
+    const CL = co.CL;
+    const CD = co.CD + 0.6 * Math.sin(be) * Math.sin(be);
     // pitch: static stability gets much stronger supersonic (aero centre moves aft)
     const cma = -0.12 - 0.5 * smoothstep(0.95, 1.3, M);
     const wHi = smoothstep(35 * DEG, 60 * DEG, Math.abs(a));
@@ -420,7 +428,7 @@ export class Aircraft {
     if (this.apc) {
       if (!this.pa || this.wow || this.state !== 'fly') { this.apc = false; this.emit('apcOff'); }
       else {
-        const err = this.alpha * RAD - 8.1;
+        const err = this.alpha * RAD - (this.apcTarget ?? 8.1);
         this.apcI = clamp(this.apcI + err * 0.05 * dt, -0.3, 0.6);
         thr = clamp(0.45 + this.apcI + 0.09 * err + 0.25 * this.w[0], 0.0, 1.0);
         this.apcThrottle = thr;
@@ -628,13 +636,21 @@ export class Aircraft {
 
   checkWire(env) {
     const cv = env.carrier;
-    if (!cv || this.arrest || !this.hookCmd || this.hookAng < 20 * DEG) { this.lastHookTip = null; return; }
+    // hook must be extended (it rides the deck at a shallow angle when the tail is low)
+    if (!cv || this.arrest || !this.hookCmd || this.hookAng < 8 * DEG) { this.lastHookTip = null; return; }
     const tip = this.toWorld(this.hookTipBody());
     if (this.lastHookTip) {
       const w = cv.wireCrossing(this.lastHookTip, tip);
       if (w >= 0) {
-        this.arrest = { wire: w, dist: 0, max: 100, stopped: false, anchor: null };
-        this.emit('trap', { wire: w + 1 });
+        const rv = vsub(this.vel, cv.velocity());
+        const closure = Math.hypot(rv[0], rv[2]);
+        // Mk 7 arresting gear engaging-speed limit for the Hornet (~150 kt closure)
+        if (closure > 150 * KT) {
+          this.emit('wireBreak', { wire: w + 1, closure });
+        } else {
+          this.arrest = { wire: w, dist: 0, max: 100, stopped: false, anchor: null };
+          this.emit('trap', { wire: w + 1, closure, hard: closure > 140 * KT });
+        }
       }
     }
     this.lastHookTip = tip;
