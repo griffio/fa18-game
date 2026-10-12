@@ -27,6 +27,10 @@ function hinge(p, axis, ang) {
   return m4mul(T1, m4mul(R, T0));
 }
 
+// oleo compression: slide a gear leg up its strut by c metres
+function lift(c) { const T = m4(); T[13] = c; return T; }
+const PARKED_COMP = 0.14;   // static strut compression of a parked jet (CG 2.06 m above the deck)
+
 function part(R, build) {
   const mb = new MeshBuilder(EDGE, 1.2);
   build(mb);
@@ -162,7 +166,7 @@ export class HornetModel {
     for (const { q, p } of placements) {
       const M = m4fromQT(q, p);
       for (const [name, part] of Object.entries(this.parts)) {
-        const Mp = name === 'hook' ? m4mul(M, hookM) : M;
+        const Mp = name === 'hook' ? m4mul(M, hookM) : /^(noseGear|main[LR])$/.test(name) ? m4mul(M, lift(PARKED_COMP)) : M;
         const v = part.cpu.verts, l = part.cpu.lines;
         for (let i = 0; i < v.length; i += 7) {
           const a = xf(Mp, [v[i], v[i + 1], v[i + 2]]);
@@ -209,9 +213,10 @@ export class HornetModel {
     drawPart(P.sb, hinge([0, 0.66, 2.6], [1, 0, 0], -(s.sb || 0) * 55 * DEG));
     const g = s.gear ?? 1;
     if (g > 0.01) {
-      drawPart(P.noseGear, hinge([0, -0.55, -5.2], [1, 0, 0], (1 - g) * 95 * DEG));
-      drawPart(P.mainR, hinge([1.62, -0.5, 0.75], [0, 0, 1], -(1 - g) * 88 * DEG));
-      drawPart(P.mainL, hinge([-1.62, -0.5, 0.75], [0, 0, 1], (1 - g) * 88 * DEG));
+      const c = s.strutComp ? s.strutComp() : [0, 0, 0];   // N, L, R
+      drawPart(P.noseGear, m4mul(hinge([0, -0.55, -5.2], [1, 0, 0], (1 - g) * 95 * DEG), lift(c[0])));
+      drawPart(P.mainR, m4mul(hinge([1.62, -0.5, 0.75], [0, 0, 1], -(1 - g) * 88 * DEG), lift(c[2])));
+      drawPart(P.mainL, m4mul(hinge([-1.62, -0.5, 0.75], [0, 0, 1], (1 - g) * 88 * DEG), lift(c[1])));
     }
     drawPart(P.hook, hinge(HOOK.pivot, [1, 0, 0], s.hookAng ?? HOOK.up));
     if (!tint) this.drawFlame(R, M, s);

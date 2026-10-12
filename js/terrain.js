@@ -1,7 +1,7 @@
 // Terrain: a 400 m height grid of the Bay Area generated from coastline
 // signed-distance fields plus named peaks, rendered as flat-shaded facets with
 // vector coastline, contour and grid lines laid exactly on the surface.
-import { GRID, OCEAN, BAY, ISLANDS, PEAKS, URBAN, PARKS, AIRFIELDS, ll } from './geo.js';
+import { GRID, OCEAN, BAY, ISLANDS, PEAKS, URBAN, PARKS, AIRFIELDS, RUNWAYS, ll } from './geo.js';
 import { smoothstep, fbm2, clamp, lerp } from './math.js';
 import { MeshBuilder } from './mesh.js';
 
@@ -38,6 +38,15 @@ export function landSD(x, z) {
 const peaks = PEAKS.map(([la, lo, h, r]) => { const [x, z] = ll(la, lo); return { x, z, h, r }; });
 const urban = URBAN.map(([la, lo, r]) => { const [x, z] = ll(la, lo); return { x, z, r }; });
 const fields = AIRFIELDS.map(([la, lo, r]) => { const [x, z] = ll(la, lo); return { x, z, r }; });
+// runway strips: flat out to more than one terrain cell diagonal (400 m grid) from the
+// edges, so every terrain triangle under a runway is level with it
+const strips = RUNWAYS.map(([, a, b, w]) => { const A = ll(...a), B = ll(...b); return { A, B, w }; });
+const STRIP_FLAT = 600, STRIP_FADE = 950;
+function stripDist(x, z, s) {
+  const dx = s.B[0] - s.A[0], dz = s.B[1] - s.A[1];
+  const t = clamp(((x - s.A[0]) * dx + (z - s.A[1]) * dz) / (dx * dx + dz * dz), 0, 1);
+  return Math.hypot(x - s.A[0] - dx * t, z - s.A[1] - dz * t) - s.w / 2;
+}
 
 export function terrainHeightAt(x, z, sd) {
   let h = sd < 0 ? Math.max(sd * 0.012, -45) : landHeight(x, z, sd);
@@ -45,6 +54,10 @@ export function terrainHeightAt(x, z, sd) {
   for (const f of fields) {
     const d = Math.hypot(x - f.x, z - f.z);
     if (d < f.r) h = lerp(h, 3.5, smoothstep(f.r, f.r * 0.75, d));
+  }
+  for (const s of strips) {
+    const d = stripDist(x, z, s);
+    if (d < STRIP_FADE) h = lerp(h, 3.5, smoothstep(STRIP_FADE, STRIP_FLAT, d));
   }
   return h;
 }
@@ -70,6 +83,7 @@ function landHeight(x, z, sd) {
 
 function materialAt(x, z, h, sd) {
   for (const f of fields) if (Math.hypot(x - f.x, z - f.z) < f.r * 0.8) return 2;
+  for (const s of strips) if (stripDist(x, z, s) < STRIP_FLAT) return 2;
   if (sd < 0) return 0;
   for (const p of PARKS) if (pointInPoly(x, z, p)) return 3;
   if (h < 170) {

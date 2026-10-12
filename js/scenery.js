@@ -13,6 +13,7 @@ export class Scenery {
   constructor(terrain) {
     this.terrain = terrain;
     this.boxes = [];
+    this.runways = [];
     this.grid = new Map();
     this.mb = new MeshBuilder([0.75, 0.92, 1.0, 0.8], 1.2);
     this.rand = rng(1988);
@@ -42,6 +43,16 @@ export class Scenery {
       this.grid.get(k).push(b);
     }
   }
+  // height of the runway surface at (x, z), or null when not on a runway
+  runwayAt(x, z) {
+    for (const r of this.runways) {
+      const dx = x - r.A[0], dz = z - r.A[1];
+      const s = dx * r.d[0] + dz * r.d[2], l = dz * r.d[0] - dx * r.d[2];
+      if (s > -1 && s < r.L + 1 && Math.abs(l) < r.w / 2 + 1) return r.y;
+    }
+    return null;
+  }
+
   collide(p) {
     const k = Math.floor(p[0] / 1000) + ',' + Math.floor(p[2] / 1000);
     const list = this.grid.get(k);
@@ -400,6 +411,7 @@ export class Scenery {
       const y = Math.max(this.ground(A[0], A[1]), this.ground(B[0], B[1]), this.ground((A[0] + B[0]) / 2, (A[1] + B[1]) / 2)) + 0.08;
       const P = (s, l) => [A[0] + d[0] * s + n[0] * l, y, A[1] + d[2] * s + n[2] * l];
       const L = Math.hypot(B[0] - A[0], B[1] - A[1]);
+      this.runways.push({ A, d, L, w, y });
       mb.poly([P(0, -w / 2), P(L, -w / 2), P(L, w / 2), P(0, w / 2)], hex('#45484c'), null);
       const WHT = [1, 1, 1, 0.8];
       mb.line(P(0, -w / 2), P(L, -w / 2), WHT, 1.2);

@@ -118,6 +118,12 @@ export class Aircraft {
     this.updateAir({ wind: () => [0, 0, 0] });
   }
 
+  // strut compression in metres [nose, left, right], for drawing the gear
+  strutComp() {
+    if (this.cat) { const c = Math.max(0, 2.2 - this.cat.h); return [c, c, c]; }
+    return this.wheel.map((w, i) => w.comp * GEAR[i].stroke);
+  }
+
   emit(type, data = {}) { this.events.push({ type, ...data }); }
 
   get eulers() { return eulerFromQ(this.q); }

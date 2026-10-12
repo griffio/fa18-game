@@ -190,6 +190,8 @@ class Game {
   surface(p) {
     const dk = this.cv.deckAt(p);
     if (dk) return dk;
+    const rw = this.scenery.runwayAt(p[0], p[2]);
+    if (rw !== null) return { y: rw, n: [0, 1, 0], v: [0, 0, 0], kind: 'land' };
     const h = this.terrain.heightAt(p[0], p[2]);
     if (h > 0.05) return { y: h, n: this.terrain.normalAt(p[0], p[2]), v: [0, 0, 0], kind: 'land' };
     return { y: 0, n: [0, 1, 0], v: [0, 0, 0], kind: 'water' };
@@ -229,7 +231,7 @@ class Game {
       const [x0, z0] = MOFFETT.thr, [x1, z1] = MOFFETT.end;
       const L = Math.hypot(x1 - x0, z1 - z0), ux = (x1 - x0) / L, uz = (z1 - z0) / L;
       const x = x0 + ux * 60, z = z0 + uz * 60;
-      ac.placeOnGround(x, this.terrain.heightAt(x, z), z, Math.atan2(ux, -uz));
+      ac.placeOnGround(x, this.surface([x, 10, z]).y, z, Math.atan2(ux, -uz));
       this.parkBrake = true;
     } else ac.attachToCatapult(this.cv);
     ac.N = 0.7;
@@ -744,7 +746,7 @@ class Game {
     const n = s.n;
     const c = this.cam.pos;
     const p0 = [sp[0] - c[0], s.y - c[1], sp[2] - c[2]];
-    const d = n[0] * p0[0] + n[1] * p0[1] + n[2] * p0[2] + (s.kind === 'land' ? 0.2 : 0.06);   // runways are drawn 8 cm above the terrain
+    const d = n[0] * p0[0] + n[1] * p0[1] + n[2] * p0[2] + (s.kind === 'land' ? 0.15 : 0.06);   // clear of the runway / terrain layers
     const nl = n[0] * L[0] + n[1] * L[1] + n[2] * L[2];
     const S = new Float32Array(16);
     for (let col = 0; col < 3; col++) for (let row = 0; row < 3; row++) S[col * 4 + row] = (row === col ? 1 : 0) - (L[row] * n[col]) / nl;
