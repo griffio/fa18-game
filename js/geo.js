@@ -147,11 +147,15 @@ export const RUNWAYS = [
   ['NAS ALAMEDA 07/25', [37.7805, -122.3195], [37.7880, -122.2950], 61],
   ['NAS ALAMEDA 13/31', [37.7920, -122.3110], [37.7760, -122.2950], 61],
   ['OAK 11/29', [37.7120, -122.2350], [37.6990, -122.2000], 61],
+  // NAS Moffett Field - the P-3 Orion base on the south bay
+  ['MOFFETT 32R/14L', [37.4055509, -122.0425983], [37.4289229, -122.0546063], 61],
+  ['MOFFETT 32L/14R', [37.4045810, -122.0444250], [37.4252220, -122.0550280], 61],
 ];
 export const AIRFIELDS = [
   [37.6190, -122.3750, 2400],
   [37.7840, -122.3070, 1700],
   [37.7060, -122.2180, 1600],
+  [37.4161, -122.0491, 2900],
 ];
 
 export const LANDMARKS = {
@@ -173,7 +177,12 @@ export const LANDMARKS = {
   richmondBridgeE: ll(37.9250, -122.4000),
   sanMateoBridgeW: ll(37.5850, -122.2550),
   sanMateoBridgeE: ll(37.6150, -122.1400),
+  hangarOne: ll(37.4129, -122.0539),
+  moffettTower: ll(37.4168, -122.0517),
 };
+
+// field start: NAS Moffett, runway 32R (338° true, 9,200 ft)
+export const MOFFETT = { name: 'NAS MOFFETT FIELD', rwy: '32R', thr: ll(37.4055509, -122.0425983), end: ll(37.4289229, -122.0546063) };
 
 // world extents of the detailed terrain grid (m)
 export const GRID = { x0: -40000, z0: -40000, x1: 64000, z1: 52000, cell: 400 };

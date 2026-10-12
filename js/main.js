@@ -18,6 +18,7 @@ import { Music } from './music.js';
 import { Input } from './input.js';
 import { LSO } from './lso.js';
 import { textWidth } from './vfont.js';
+import { MOFFETT, LANDMARKS } from './geo.js';
 
 const PHYS_DT = 1 / 240;
 const WIND_FROM = 285 * DEG, WIND_KT = 12;
@@ -25,6 +26,10 @@ const WIND = [-Math.sin(WIND_FROM) * WIND_KT * KT, 0, Math.cos(WIND_FROM) * WIND
 const SUN = vnorm([-0.45, 0.72, 0.52]);
 
 const VIEWS = ['COCKPIT', 'HUD', 'CHASE', 'ORBIT', 'TOWER', 'FLY-BY', 'LSO', 'CARRIER'];
+const BASES = {
+  cv: { name: 'CVN-68 - CATAPULT ONE', short: 'CVN-68 CATAPULT 1', respot: 'RESPOTTED ON CAT 1 - FUEL FULL' },
+  moffett: { name: MOFFETT.name + ' - RUNWAY ' + MOFFETT.rwy, short: 'NAS MOFFETT RWY ' + MOFFETT.rwy, respot: 'BACK ON RUNWAY ' + MOFFETT.rwy + ' - FUEL FULL' },
+};
 
 class Game {
   constructor() {
@@ -52,7 +57,7 @@ class Game {
   }
 
   loadSettings() {
-    const def = { style: 'hybrid', dots: true, scan: true, invert: false, voice: true, sound: true, mouseCenter: true };
+    const def = { style: 'hybrid', dots: true, scan: true, invert: false, voice: true, sound: true, mouseCenter: true, base: 'cv' };
     try { return Object.assign(def, JSON.parse(localStorage.getItem('fa18-settings-v2') || '{}')); } catch { return def; }
   }
   saveSettings() { try { localStorage.setItem('fa18-settings-v2', JSON.stringify(this.settings)); } catch { /* ignore */ } }
@@ -135,9 +140,11 @@ class Game {
     this.state = 'flight';
     this.view = 0;
     this.respot();
-    this.msg('CVN-68 - CATAPULT ONE', 'big');
-    this.later(1.2, () => this.msg('THROTTLE TO MIL (+)  ·  FLAPS HALF  ·  PRESS C TO LAUNCH', 'hint', 7));
+    this.msg(BASES[this.base].name, 'big');
+    if (this.base === 'moffett') this.later(1.2, () => this.msg('PARKING BRAKE SET  ·  THROTTLE TO MIL (+)  ·  C RELEASES BRAKES  ·  ROTATE AT 145 KT', 'hint', 8));
+    else this.later(1.2, () => this.msg('THROTTLE TO MIL (+)  ·  FLAPS HALF  ·  PRESS C TO LAUNCH', 'hint', 7));
   }
+  get base() { return BASES[this.settings.base] ? this.settings.base : 'cv'; }
 
   // ------------------------------------------------------------------ environment
   wind(p, t) {
@@ -199,7 +206,15 @@ class Game {
     ac.flapSel = 1; ac.flap = 0.5;
     this.ctl = { pitch: 0, roll: 0, yaw: 0, throttle: 0, gear: true, flaps: 1, hook: false, speedBrake: false, brakes: 1 };
     if (this.input) this.input.throttle = 0;
-    ac.attachToCatapult(this.cv);
+    this.parkBrake = false;
+    if (this.base === 'moffett') {
+      // lined up on the runway, 60 m past the threshold
+      const [x0, z0] = MOFFETT.thr, [x1, z1] = MOFFETT.end;
+      const L = Math.hypot(x1 - x0, z1 - z0), ux = (x1 - x0) / L, uz = (z1 - z0) / L;
+      const x = x0 + ux * 60, z = z0 + uz * 60;
+      ac.placeOnGround(x, this.terrain.heightAt(x, z), z, Math.atan2(ux, -uz));
+      this.parkBrake = true;
+    } else ac.attachToCatapult(this.cv);
     ac.N = 0.7;
     this.cv.waveOff = false;
     this.timers = [];
@@ -223,14 +238,19 @@ class Game {
       if (this.state === 'boot') { this.boot(); continue; }
       if (this.state === 'title') {
         if (c === 'Enter' || c === 'Space' || c === 'Pad0' || c === 'Pad9') this.startFlight();
-        else this.optionKey(c, k.shift);
+        else if (c === 'ArrowLeft' || c === 'ArrowRight' || c === 'ArrowUp' || c === 'ArrowDown' || c === 'Pad14' || c === 'Pad15') {
+          this.settings.base = this.base === 'cv' ? 'moffett' : 'cv';
+          this.saveSettings();
+          this.respot();
+          this.audio.play('click', { gain: 0.4, ch: 0 });
+        } else this.optionKey(c, k.shift);
         continue;
       }
       if (c === 'Escape' || c === 'KeyP' || c === 'Pad9') { this.togglePause(); continue; }
       if (this.optionKey(c, k.shift)) continue;
       if (this.paused) {
         if (c === 'KeyQ') { this.paused = false; this.respot(); this.state = 'title'; this.input.unlockMouse(); this.music.start(); }
-        else if (c === 'KeyR') { this.paused = false; this.respot(); this.msg('RESPOTTED ON CAT 1 - FUEL FULL'); }
+        else if (c === 'KeyR') { this.paused = false; this.respot(); this.msg(BASES[this.base].respot); }
         if (!this.paused && window.speechSynthesis) window.speechSynthesis.cancel();
         continue;
       }
@@ -252,7 +272,7 @@ class Game {
           else this.msg('ATC NEEDS FLAPS HALF/FULL AND AIRBORNE');
           break;
         case 'KeyC': case 'Pad0': this.tryLaunch(); break;
-        case 'KeyR': this.respot(); this.msg('RESPOTTED ON CAT 1 - FUEL FULL'); break;
+        case 'KeyR': this.respot(); this.msg(BASES[this.base].respot); break;
         case 'Tab':
           this.input.throttle = this.input.throttle > 1.0 ? 1.0 : 1.2; this.input.abDetent = false; break;
         case 'Backspace': this.input.throttle = 0; break;
@@ -306,7 +326,13 @@ class Game {
 
   tryLaunch() {
     const ac = this.ac;
-    if (ac.state !== 'cat') return;
+    if (ac.state !== 'cat') {
+      // on land, C works the parking brake
+      if (ac.state !== 'fly' || !ac.wow || ac.surfBelow?.kind === 'deck' || ac.wheel.some((w) => w.surf === 'deck')) return;
+      if (this.parkBrake) { this.parkBrake = false; this.msg(ac.N > 0.95 ? 'BRAKES RELEASED - ROLLING' : 'PARKING BRAKE OFF', 'info', 2.5); }
+      else if ((ac.groundSpeedRel || 0) < 1) { this.parkBrake = true; this.msg('PARKING BRAKE SET', 'info', 2.5); }
+      return;
+    }
     if (ac.N < 0.95) { this.msg('ADVANCE THROTTLE TO MIL BEFORE SALUTING THE CAT OFFICER', 'warn'); return; }
     if (this.ctl.flaps === 0) this.msg('WARNING - FLAPS AUTO FOR LAUNCH', 'warn');
     if (ac.launch()) {
@@ -324,7 +350,7 @@ class Game {
     ctl.throttle = this.input.throttle;
     if (this.autopilot) this.autopilot(ac, ctl, dt);
     const brake = this.input.down('Space') || this.input.padBrake;
-    ctl.brakes = brake || (ac.arrest && ac.arrest.stopped) || ac.state === 'cat' ? 1 : 0;
+    ctl.brakes = brake || this.parkBrake || (ac.arrest && ac.arrest.stopped) || ac.state === 'cat' ? 1 : 0;
     if (ac.apc) this.input.throttle = ac.apcThrottle ?? this.input.throttle;
     this.acc = (this.acc || 0) + dt;
     let steps = 0;
@@ -410,7 +436,7 @@ class Game {
     }
     this.lso.onCrash(e.reason);
     this.msg(e.reason, 'big', 99);
-    this.later(1.5, () => this.msg('PRESS R TO RESPOT ON THE CATAPULT', 'hint', 99));
+    this.later(1.5, () => this.msg('PRESS R TO RESPOT - ' + BASES[this.base].short, 'hint', 99));
     if (this.view <= 2 || this.view === 5) this.view = 3;
     this.orbit = { yaw: Math.atan2(-e.vel[0], e.vel[2]) + 0.6, pitch: 0.35, dist: 140 };
     this.input.unlockMouse();
@@ -497,8 +523,11 @@ class Game {
       q = lookAt(pos, center);
       fov = 50 * DEG;
     } else if (view === 4) {
-      // tower: carrier island (Pri-Fly)
+      // tower: carrier island (Pri-Fly) or the Moffett control tower, whichever is nearer
       pos = this.cv.islandView();
+      const [mx, mz] = LANDMARKS.moffettTower;
+      const mt = [mx + 9, this.terrain.heightAt(mx, mz) + 36, mz];
+      if (vlen(vsub(mt, tgt)) < vlen(vsub(pos, tgt))) pos = mt;
       if (vlen(vsub(pos, tgt)) > 25000) pos = vadd(tgt, [800, 120, 800]);
       q = lookAt(pos, tgt);
       fov = zoomFov(vlen(vsub(pos, tgt)), 30);
@@ -582,10 +611,10 @@ class Game {
       this.time += dt;
       this.R.time = this.time;
       if (this.state === 'title') {
-        // attract mode: Hornet idling on the catapult
+        // attract mode: Hornet idling on the catapult (or parked on the runway)
         this.cv.update(dt);
         this.ac.N = 0.72;
-        this.ac.stepCatapult(0, {}, this.env);
+        if (this.ac.cat) this.ac.stepCatapult(0, {}, this.env);
       } else {
         const t0 = performance.now();
         this.physics(dt);
@@ -817,20 +846,21 @@ class Game {
     d.text('BAY AREA  ·  CARRIER QUALIFICATION', W / 2, ty + sz * 1.25, sz * 0.24, cyan, 'center', 1.5);
     // menu panel
     const lines = [
-      ['ENTER / CLICK', 'START SOLO FLIGHT FROM CVN-68'],
+      ['ENTER / CLICK', 'START SOLO FLIGHT'],
+      ['ARROWS', 'START POINT:  ' + (this.base === 'cv' ? '> CVN-68 CATAPULT 1 <   NAS MOFFETT RWY 32R' : '  CVN-68 CATAPULT 1   > NAS MOFFETT RWY 32R <')],
       ['', ''],
       ['ARROWS', 'STICK  (DOWN = PULL)   Z / X  RUDDER'],
       ['+ / -', 'THROTTLE (STOPS AT MIL, PRESS AGAIN FOR AB)'],
       ['TAB', 'AFTERBURNER   BACKSPACE  IDLE'],
       ['G  F  H  B', 'GEAR  FLAPS DOWN (SHIFT+F UP)  HOOK  SPD BRK'],
-      ['C', 'CATAPULT LAUNCH (SALUTE)     SPACE  WHEEL BRAKES'],
+      ['C', 'CATAPULT LAUNCH / PARKING BRAKE   SPACE  WHEEL BRAKES'],
       ['A', 'ATC - APPROACH POWER COMPENSATOR'],
       ['1 - 8', 'VIEWS: COCKPIT HUD CHASE ORBIT TOWER FLYBY LSO SHIP'],
       ['Q / E', 'LOOK LEFT / RIGHT  (RIGHT-MOUSE DRAG: LOOK AROUND)'],
       ['M  O', 'MOUSE FLIGHT  /  MOUSE SELF-CENTRING'],
       ['K  L  D', 'GRAPHICS: ' + STYLES[this.settings.style].name + '  /  SCANLINES  /  DOT FIELD'],
       ['N  J  SHIFT+I', 'SOUND  /  RADIO VOICES  /  INVERT PITCH'],
-      ['R  P', 'RESPOT ON CATAPULT  /  PAUSE'],
+      ['R  P', 'RESPOT AT START POINT  /  PAUSE'],
     ];
     const lh = clamp(H * 0.03, 14, 22);
     const bw = Math.min(W * 0.8, 760), bx = W / 2 - bw / 2, by = H * 0.36;
@@ -840,7 +870,7 @@ class Game {
       const y = by + i * lh;
       const pulse = i === 0 ? 0.6 + 0.4 * Math.sin(t * 5) : 1;
       d.text(k, bx + bw * 0.3, y, lh * 0.52, i === 0 ? [1, 0.8, 0.3, pulse] : gold, 'right', 1.3);
-      d.text(v, bx + bw * 0.34, y, lh * 0.52, i === 0 ? [1, 1, 1, pulse] : white, 'left', 1.3);
+      d.text(v, bx + bw * 0.34, y, lh * 0.52, i === 0 ? [1, 1, 1, pulse] : i === 1 ? cyan : white, 'left', 1.3);
     });
     d.text('A TRIBUTE TO F/A-18 INTERCEPTOR - AMIGA 1988', W / 2, H - 34, 11, [0.6, 0.75, 0.9, 0.8], 'center');
   }
@@ -851,7 +881,7 @@ class Game {
     d.text('PAUSED', W / 2, H * 0.12, 30, [1, 1, 1, 1], 'center', 2.4);
     const keys = [
       ['ARROWS', 'STICK (DOWN = PULL)'], ['Z / X', 'RUDDER / NOSEWHEEL'], ['+ / -  TAB', 'THROTTLE  /  AFTERBURNER'],
-      ['G F H B', 'GEAR FLAPS(SHIFT=UP) HOOK SPEEDBRAKE'], ['C  SPACE', 'CATAPULT  /  WHEEL BRAKES'], ['A', 'APPROACH POWER COMPENSATOR'],
+      ['G F H B', 'GEAR FLAPS(SHIFT=UP) HOOK SPEEDBRAKE'], ['C  SPACE', 'CATAPULT OR PARKING BRAKE  /  WHEEL BRAKES'], ['A', 'APPROACH POWER COMPENSATOR'],
       ['1-8  V', 'VIEWS'], ['Q E', 'LOOK LEFT / RIGHT'], ['`', 'PERFORMANCE STATS'], ['[ ]', 'MAP RANGE'], ['K L D', 'GRAPHICS STYLE / SCANLINES / DOTS'], ['M O SHIFT+I', 'MOUSE / SELF-CENTRE / INVERT'],
       ['N J', 'SOUND / RADIO VOICES'],
     ];

@@ -413,6 +413,28 @@ export class Scenery {
     // hangars at NAS Alameda
     const [hx, hz] = ll(37.7860, -122.3080);
     for (let i = 0; i < 5; i++) this.building(hx + i * 90, hz - 300 - i * 25, 70, 60, 22, hex('#9aa0a4'), 0, 'NAS ALAMEDA');
+    // Moffett Field's Hangar One: the 1933 airship hangar, 345 m long, 94 m wide, 60 m high,
+    // lying parallel to the runways
+    const [ox, oz] = LANDMARKS.hangarOne;
+    const og = this.ground(ox, oz);
+    const ah = 338 * DEG, au = [Math.sin(ah), 0, -Math.cos(ah)], av = [-au[2], 0, au[0]];
+    const rings = [];
+    for (let k = 0; k <= 12; k++) {
+      const s = (k / 12 - 0.5) * 345;
+      const e = Math.pow(Math.max(0, 1 - Math.pow(Math.abs(s) / 172.5, 6)), 0.5) * 0.85 + 0.15;   // rounded clamshell ends
+      const ring = [];
+      for (let i = 0; i <= 10; i++) {
+        const a = (i / 10) * Math.PI;
+        const l = -Math.cos(a) * 47 * e, y = Math.pow(Math.sin(a), 0.7) * 60 * e;
+        ring.push([ox + au[0] * s + av[0] * l, og + y, oz + au[2] * s + av[2] * l]);
+      }
+      rings.push(ring);
+    }
+    mb.loft(rings, hex('#b9bec2'), undefined, false, true, true);
+    this.addBox([ox, og + 30, oz], au, 172, 47, 31, 'HANGAR ONE');
+    const [tx, tz] = LANDMARKS.moffettTower;
+    this.building(tx, tz, 9, 9, 32, hex('#d8d4c8'), 0, 'MOFFETT TOWER');
+    this.mb.box([tx, this.ground(tx, tz) + 34, tz], 13, 4, 13, hex('#33515f'), [0.55, 0.68, 0.8, 0.55]);
   }
 
   ships() {

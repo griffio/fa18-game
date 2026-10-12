@@ -16,7 +16,7 @@
 //  * Tailhook, arresting gear and steam catapult.
 import {
   DEG, RAD, G0, KT, clamp, lerp, smoothstep, vadd, vsub, vscale, vmadd, vdot, vcross, vlen, vnorm,
-  qrot, qrotInv, qintegrate, qmul, qconj, qnorm, eulerFromQ, vnoise1,
+  qrot, qrotInv, qintegrate, qmul, qconj, qnorm, eulerFromQ, qfromEuler, vnoise1,
 } from './math.js';
 
 // ------------------------------------------------------------------ atmosphere
@@ -312,7 +312,10 @@ export class Aircraft {
     let de, da, dr;
     if (direct) {
       // mechanical / ground mode: surfaces follow the stick
-      de = ctl.pitch * 24 * DEG + (this.wow ? 0 : 0);
+      de = ctl.pitch * 24 * DEG;
+      // take-off roll: once there's airflow over the tail the PA-mode pitch-rate
+      // feedback is active, so aft stick rotates at ~6°/s instead of slamming the tail down
+      if (this.wow && qbar > 400) de += clamp(6 * (ctl.pitch * 6 * DEG - q), -20 * DEG, 20 * DEG) * smoothstep(400, 2000, qbar);
       da = ctl.roll * 25 * DEG;
       dr = ctl.yaw * 30 * DEG;
       this.fcsMode = this.wow ? 'GND' : 'DIR';
@@ -622,6 +625,21 @@ export class Aircraft {
     this.hookAng = HOOK.up;
     this.wheel.forEach((w) => (w.contact = true));
     this.stepCatapult(0, {}, { carrier: cv, wind: cv.windFn });
+  }
+
+  // parked on a runway at ground height y, nose on heading hdg (rad), struts at static compression
+  placeOnGround(x, y, z, hdg) {
+    this.state = 'fly';
+    this.cat = null; this.arrest = null;
+    this.crashed = false;
+    this.gear = 1; this.gearCmd = true;
+    this.hookAng = HOOK.up;
+    this.pos = [x, y + 2.13, z];
+    this.q = qfromEuler(hdg, 0, 0);
+    this.vel = [0, 0, 0]; this.w = [0, 0, 0];
+    this.wow = true;
+    this.wheel.forEach((w) => (w.contact = true));
+    this.radarAlt = 2.13;
   }
 
   launch() {
