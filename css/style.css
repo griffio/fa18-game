@@ -1,0 +1,9 @@
+html, body { margin: 0; height: 100%; background: #02040a; overflow: hidden; }
+#gl { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; outline: none; }
+#loading {
+  position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: #02040a; color: #8fd8ff; font: 14px/1.6 "Courier New", ui-monospace, monospace; letter-spacing: 0.25em;
+}
+#loading .logo { font-size: 28px; color: #ffc040; text-shadow: 0 0 12px #ff8a20; margin-bottom: 18px; }
+#loading .bar { width: 240px; height: 3px; margin-top: 14px; background: linear-gradient(90deg, #ff8a20, #8fd8ff, #ff8a20); background-size: 200% 100%; animation: slide 1.2s linear infinite; }
+@keyframes slide { from { background-position: 0 0; } to { background-position: -200% 0; } }
