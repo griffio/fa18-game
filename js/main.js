@@ -1,7 +1,7 @@
 // INTERCEPTOR // BAY AREA - a WebGL tribute to F/A-18 Interceptor (Amiga, 1988).
 import {
   DEG, RAD, KT, FT, NM, G0, clamp, lerp, smoothstep, vadd, vsub, vscale, vlen, vnorm, vdot, vcross,
-  qrot, qmul, qaxis, qnorm, qfromEuler, qlookDir, qslerp, eulerFromQ, wrap360, vnoise1, m4, rng,
+  qrot, qmul, qaxis, qnorm, qfromEuler, vmadd, qintegrate, qlookDir, qslerp, eulerFromQ, wrap360, vnoise1, m4, rng,
 } from './math.js';
 import { Renderer, STYLES } from './gl.js';
 import { Terrain } from './terrain.js';
@@ -593,11 +593,22 @@ class Game {
       this.blackout = clamp((this.blackout || 0) + (gl > 7.2 ? (gl - 7.2) * 0.25 * dt : -0.35 * dt), 0, 0.8);
       this.R.fade = this.inside ? 1 - this.blackout : 1;
     }
+    // Physics runs in fixed 1/240 s steps, so a frame gets 4 or 5 of them. Present the
+    // jet and the ship where they are *now* by advancing them through the leftover
+    // sub-step time; otherwise the jet lurches fore/aft against a smooth camera.
+    const ac = this.ac, cv = this.cv;
+    const physPos = ac.pos, physQ = ac.q, cvPos = cv.pos;
+    const lead = this.state === 'flight' && !this.paused ? (this.acc || 0) : 0;
+    if (lead > 0) {
+      cv.pos = vmadd(cvPos, cv.vel, lead);
+      if (ac.state !== 'crashed') { ac.pos = vmadd(physPos, ac.vel, lead); ac.q = qintegrate(physQ, ac.w, lead); }
+    }
     this.updateCamera(dt);
     this.updateAudio();
     this.dynamicResolution(dt);
     const t1 = performance.now();
     this.render(dt);
+    ac.pos = physPos; ac.q = physQ; cv.pos = cvPos;
     const p = this.perf;
     p.render = p.render * 0.95 + (performance.now() - t1) * 0.05;
     p.fps = p.fps * 0.95 + (dt > 0 ? 1 / dt : 60) * 0.05;
