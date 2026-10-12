@@ -5,6 +5,42 @@ import { m4, m4mul, m4fromQT, m4perspective, m4ortho, m4invert, m4viewRot, vsub,
 
 const LOGDEPTH = `uniform float uLogC;`;
 
+
+// Interceptor-style ground dot field: jittered lattice of square dots in world
+// space, ~constant size on screen. Each lattice level fades out once a pixel
+// covers too much ground for it, so dense dots only appear close to the surface.
+const DOTS = `
+uniform float uPx;
+vec2 hash2(vec2 c){
+  uvec2 q = uvec2(ivec2(c) + ivec2(262144));
+  q = q * uvec2(1664525u, 1013904223u);
+  q.x += q.y * 1664525u; q.y += q.x * 1664525u;
+  q = q ^ (q >> 16u);
+  q.x += q.y * 1664525u; q.y += q.x * 1664525u;
+  q = q ^ (q >> 16u);
+  return vec2(q) * (1.0/4294967295.0);
+}
+// Jinv maps a ground offset (m) to a screen offset (px); wpp = ground metres per pixel
+float dotLayer(vec2 xz, float S, float rpx, mat2 Jinv, float wpp){
+  vec2 g = xz / S;
+  vec2 c = floor(g);
+  vec2 p = c + 0.18 + 0.64*hash2(c + vec2(S*7.0, S*13.0));
+  vec2 pix = abs(Jinv * ((g - p) * S));
+  float r = rpx * uPx;
+  float a = clamp(r + 0.5 - max(pix.x, pix.y), 0.0, 1.0);   // square, pixel-like dots
+  return a * (1.0 - smoothstep(S*0.035, S*0.09, wpp / uPx));
+}
+float dotField(vec2 xz){
+  vec2 ddx = dFdx(xz), ddy = dFdy(xz);
+  mat2 J = mat2(ddx, ddy);
+  float det = determinant(J);
+  if (abs(det) < 1e-8) return 0.0;
+  mat2 Jinv = inverse(J);
+  float wpp = max(length(ddx), length(ddy));
+  float a = max(dotLayer(xz, 4.0, 1.0, Jinv, wpp), dotLayer(xz, 9.0, 1.1, Jinv, wpp));
+  return max(a, max(dotLayer(xz, 45.0, 1.25, Jinv, wpp), dotLayer(xz, 220.0, 1.4, Jinv, wpp)));
+}`;
+
 const MESH_VS = `#version 300 es
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec4 aCol;
@@ -49,18 +85,20 @@ const TERR_VS = `#version 300 es
 layout(location=0) in vec3 aPos;
 layout(location=1) in float aMat;
 uniform mat4 uVP; uniform vec3 uCam;
-out vec3 vRel; out float vW; flat out float vH; flat out float vMat; out float vY;
+out vec3 vRel; out float vW; flat out float vH; flat out float vMat; out float vY; out vec2 vWXZ;
 void main(){
   vec3 r = aPos - uCam;
-  vRel = r; vH = aPos.y; vMat = aMat; vY = aPos.y;
+  vRel = r; vH = aPos.y; vMat = aMat; vY = aPos.y; vWXZ = aPos.xz;
   gl_Position = uVP*vec4(r,1.0); vW = gl_Position.w;
 }`;
 const TERR_FS = `#version 300 es
 precision highp float;
-in vec3 vRel; in float vW; flat in float vH; flat in float vMat; in float vY;
+in vec3 vRel; in float vW; flat in float vH; flat in float vMat; in float vY; in vec2 vWXZ;
 uniform vec3 uSun; uniform float uFillMix; uniform vec3 uFillCol; uniform float uLevels;
+uniform float uDots; uniform vec3 uLandDot; uniform float uLandDotMix; uniform float uDotGlow;
 ${LOGDEPTH}
 ${FOG}
+${DOTS}
 layout(location=0) out vec4 o;
 layout(location=1) out vec4 og;
 vec3 pal(float h, float m, float ny){
@@ -86,9 +124,13 @@ void main(){
   if(uLevels>0.0) sh = floor(sh*uLevels+0.5)/uLevels;
   vec3 c = pal(vH, vMat, n.y) * sh;
   c = mix(c, uFillCol*(0.5+0.5*sh), uFillMix);
-  c = mix(c, uFog, fogF(length(vRel), vY));
+  float dt = uDots > 0.0 ? dotField(vWXZ) * uDots : 0.0;
+  vec3 dc = mix(c * 0.45, uLandDot, uLandDotMix);
+  c = mix(c, dc, dt);
+  float fg = fogF(length(vRel), vY);
+  c = mix(c, uFog, fg);
   o = vec4(c, 1.0);
-  og = vec4(0.0,0.0,0.0,1.0);
+  og = vec4(uLandDot * dt * uDotGlow * (1.0 - fg), 1.0);
   gl_FragDepth = log2(1.0+vW)*uLogC;
 }`;
 
@@ -191,8 +233,10 @@ const SEA_FS = `#version 300 es
 precision highp float;
 in vec3 vRel; in vec2 vWXZ; in float vW;
 uniform vec3 uSun; uniform vec3 uSea; uniform vec3 uSeaFar; uniform vec3 uGrid; uniform float uGridA; uniform float uTime;
+uniform float uDots; uniform vec3 uSeaDot; uniform float uDotGlow;
 ${LOGDEPTH}
 ${FOG}
+${DOTS}
 layout(location=0) out vec4 o;
 layout(location=1) out vec4 og;
 void main(){
@@ -213,10 +257,12 @@ void main(){
     c = mix(c, uGrid, line*uGridA*fade);
     glow = line*fade*uGridA*0.6;
   }
+  float dt = uDots > 0.0 ? dotField(vWXZ) * uDots : 0.0;
+  c = mix(c, uSeaDot, dt);
   float fg = fogF(d, 0.0);
   c = mix(c, uFog, fg);
   o = vec4(c, 1.0);
-  og = vec4(uGrid*glow*(1.0-fg), 1.0);
+  og = vec4((uGrid*glow + uSeaDot*dt*uDotGlow)*(1.0-fg), 1.0);
   gl_FragDepth = log2(1.0+vW)*uLogC;
 }`;
 
@@ -330,19 +376,22 @@ export const STYLES = {
   hybrid: {
     name: 'HYBRID', lineGlow: 0.4, fillMix: 0.0, levels: 0, lineInt: 1.0, lineAdd: 0.6, bloom: 0.85, ocs: false, scan: 0.35,
     zen: [0.09, 0.20, 0.52], hor: [0.56, 0.68, 0.82], gnd: [0.5, 0.58, 0.66],
-    sea: [0.10, 0.27, 0.52], seaFar: [0.36, 0.5, 0.68], grid: [0.55, 0.85, 1.0], gridA: 0.22,
+    sea: [0.10, 0.27, 0.52], seaFar: [0.36, 0.5, 0.68], grid: [0.55, 0.85, 1.0], gridA: 0.0,
+    dots: 0.85, seaDot: [0.78, 0.9, 1.0], landDot: [0.1, 0.16, 0.08], landDotMix: 0.0, dotGlow: 0.15,
     fog: [0.56, 0.68, 0.82], fillCol: [0, 0, 0], edgeScale: 1.0, sun: 1.0,
   },
   amiga: {
     name: 'AMIGA OCS', lineGlow: 0.4, minW: 1.35, noTerrainLines: true, fillMix: 0.0, levels: 5, lineInt: 0.9, lineAdd: 0.0, bloom: 0.25, ocs: true, scan: 0.6,
     zen: [0.13, 0.26, 0.67], hor: [0.60, 0.73, 0.93], gnd: [0.55, 0.62, 0.68],
     sea: [0.13, 0.27, 0.60], seaFar: [0.35, 0.50, 0.78], grid: [0.5, 0.7, 1.0], gridA: 0.0,
+    dots: 1.0, seaDot: [0.8, 0.87, 1.0], landDot: [0.13, 0.2, 0.07], landDotMix: 0.0, dotGlow: 0.0,
     fog: [0.60, 0.73, 0.93], fillCol: [0, 0, 0], edgeScale: 1.0, sun: 0.6,
   },
   vector: {
     name: 'VECTOR', lineGlow: 0.75, fillMix: 0.94, levels: 0, lineInt: 1.1, lineAdd: 1.0, bloom: 1.1, ocs: false, scan: 0.5,
     zen: [0.0, 0.0, 0.02], hor: [0.02, 0.05, 0.10], gnd: [0.0, 0.02, 0.04],
-    sea: [0.0, 0.015, 0.04], seaFar: [0.01, 0.04, 0.09], grid: [0.1, 0.6, 0.9], gridA: 0.65,
+    sea: [0.0, 0.015, 0.04], seaFar: [0.01, 0.04, 0.09], grid: [0.1, 0.6, 0.9], gridA: 0.35,
+    dots: 1.0, seaDot: [0.35, 0.85, 1.0], landDot: [0.4, 1.0, 0.45], landDotMix: 1.0, dotGlow: 0.6,
     fog: [0.02, 0.05, 0.10], fillCol: [0.02, 0.05, 0.06], edgeScale: 1.25, sun: 0.0,
   },
 };
@@ -602,6 +651,10 @@ export class Renderer {
     gl.uniform3fv(u.uSea, s.sea); gl.uniform3fv(u.uSeaFar, s.seaFar);
     gl.uniform3fv(u.uGrid, s.grid); gl.uniform1f(u.uGridA, s.gridA);
     gl.uniform1f(u.uTime, this.time);
+    gl.uniform1f(u.uPx, this.pxScale);
+    gl.uniform1f(u.uDots, this.dotsOn === false ? 0 : (s.dots || 0));
+    gl.uniform3fv(u.uSeaDot, s.seaDot || [1, 1, 1]);
+    gl.uniform1f(u.uDotGlow, s.dotGlow || 0);
     gl.bindVertexArray(this.seaVao);
     gl.drawArrays(gl.TRIANGLES, 0, this.seaCount);
   }
@@ -617,6 +670,11 @@ export class Renderer {
     gl.uniform1f(u.uFillMix, s.fillMix);
     gl.uniform3fv(u.uFillCol, s.fillCol);
     gl.uniform1f(u.uLevels, s.levels);
+    gl.uniform1f(u.uPx, this.pxScale);
+    gl.uniform1f(u.uDots, this.dotsOn === false ? 0 : (s.dots || 0));
+    gl.uniform3fv(u.uLandDot, s.landDot || [0, 0, 0]);
+    gl.uniform1f(u.uLandDotMix, s.landDotMix || 0);
+    gl.uniform1f(u.uDotGlow, s.dotGlow || 0);
     gl.bindVertexArray(t.vao);
     gl.drawElements(gl.TRIANGLES, t.count, gl.UNSIGNED_INT, 0);
     this.drawCalls++;

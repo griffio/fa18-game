@@ -48,10 +48,11 @@ class Game {
     this.settings = this.loadSettings();
     this.R.setStyle(this.settings.style);
     this.R.scanlines = this.settings.scan;
+    this.R.dotsOn = this.settings.dots;
   }
 
   loadSettings() {
-    const def = { style: 'hybrid', scan: true, invert: false, voice: true, sound: true, mouseCenter: true };
+    const def = { style: 'hybrid', dots: true, scan: true, invert: false, voice: true, sound: true, mouseCenter: true };
     try { return Object.assign(def, JSON.parse(localStorage.getItem('fa18-settings-v2') || '{}')); } catch { return def; }
   }
   saveSettings() { try { localStorage.setItem('fa18-settings-v2', JSON.stringify(this.settings)); } catch { /* ignore */ } }
@@ -276,6 +277,7 @@ class Game {
         this.msg('GRAPHICS: ' + STYLES[s.style].name, 'info', 2);
         break;
       }
+      case 'KeyD': s.dots = !s.dots; this.R.dotsOn = s.dots; this.msg('GROUND DOT FIELD ' + (s.dots ? 'ON' : 'OFF'), 'info', 2); break;
       case 'KeyL': s.scan = !s.scan; this.R.scanlines = s.scan; this.msg('SCANLINES ' + (s.scan ? 'ON' : 'OFF'), 'info', 2); break;
       case 'KeyI':
         if (!shift) { this.msg('SHIFT+I TO INVERT PITCH (CURRENTLY ' + (s.invert ? 'INVERTED' : 'NORMAL - DOWN ARROW = NOSE UP') + ')', 'info', 3); return true; }
@@ -809,7 +811,7 @@ class Game {
       ['1 - 8', 'VIEWS: COCKPIT HUD CHASE ORBIT TOWER FLYBY LSO SHIP'],
       ['Q / E', 'LOOK LEFT / RIGHT  (RIGHT-MOUSE DRAG: LOOK AROUND)'],
       ['M  O', 'MOUSE FLIGHT  /  MOUSE SELF-CENTRING'],
-      ['K  L', 'GRAPHICS: ' + STYLES[this.settings.style].name + '  /  SCANLINES'],
+      ['K  L  D', 'GRAPHICS: ' + STYLES[this.settings.style].name + '  /  SCANLINES  /  DOT FIELD'],
       ['N  J  SHIFT+I', 'SOUND  /  RADIO VOICES  /  INVERT PITCH'],
       ['R  P', 'RESPOT ON CATAPULT  /  PAUSE'],
     ];
@@ -833,7 +835,7 @@ class Game {
     const keys = [
       ['ARROWS', 'STICK (DOWN = PULL)'], ['Z / X', 'RUDDER / NOSEWHEEL'], ['+ / -  TAB', 'THROTTLE  /  AFTERBURNER'],
       ['G F H B', 'GEAR FLAPS(SHIFT=UP) HOOK SPEEDBRAKE'], ['C  SPACE', 'CATAPULT  /  WHEEL BRAKES'], ['A', 'APPROACH POWER COMPENSATOR'],
-      ['1-8  V', 'VIEWS'], ['Q E', 'LOOK LEFT / RIGHT'], ['`', 'PERFORMANCE STATS'], ['[ ]', 'MAP RANGE'], ['K L', 'GRAPHICS STYLE / SCANLINES'], ['M O SHIFT+I', 'MOUSE / SELF-CENTRE / INVERT'],
+      ['1-8  V', 'VIEWS'], ['Q E', 'LOOK LEFT / RIGHT'], ['`', 'PERFORMANCE STATS'], ['[ ]', 'MAP RANGE'], ['K L D', 'GRAPHICS STYLE / SCANLINES / DOTS'], ['M O SHIFT+I', 'MOUSE / SELF-CENTRE / INVERT'],
       ['N J', 'SOUND / RADIO VOICES'],
     ];
     keys.forEach(([k, v], i) => {

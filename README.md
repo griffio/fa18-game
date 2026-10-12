@@ -35,6 +35,7 @@ Click to "insert the disk" (this also unlocks audio), then press **Enter** to fl
 | \` (backquote) | Performance overlay (FPS, physics/render ms, draw calls, resolution scale) |
 | [ ] | Tactical map range |
 | M / O | Mouse flight (the Amiga original's mouse-as-stick) / self-centring on/off |
+| D | Ground dot field on/off (the original's low-altitude cue for landing by eye) |
 | K / L | Graphics: HYBRID, AMIGA OCS (12-bit palette, copper skies), VECTOR / scanlines |
 | N / J / Shift+I | Sound / radio voices / invert pitch (default: Down arrow = nose up) |
 | R | Respot on catapult 1 (refuels) |
