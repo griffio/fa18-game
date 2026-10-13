@@ -6,6 +6,15 @@ Amiga's flat-shaded polygons, glowing vector lines and the Paula sound chip.
 
 No build step, no dependencies - plain ES modules + raw WebGL2 + Web Audio.
 
+![Chase view: low pass past the Golden Gate Bridge](docs/screenshots/golden-gate.jpg)
+
+| | |
+| --- | --- |
+| ![Title screen with start point choice](docs/screenshots/title.jpg) | ![On catapult 1 at MIL power, chase view](docs/screenshots/catapult.jpg) |
+| Title screen - pick CVN-68 or NAS Moffett | Catapult 1, run up to MIL and salute |
+| ![Cockpit view in the groove: HUD, ball and DDIs](docs/screenshots/approach.jpg) | ![LSO view of a Hornet in the groove, Amiga OCS palette](docs/screenshots/amiga-lso.jpg) |
+| In the groove: HUD, ICLS, ball repeater and DDIs | LSO view in the AMIGA OCS graphics mode |
+
 ## Run
 
 ES modules need to be served over HTTP (not `file://`):
