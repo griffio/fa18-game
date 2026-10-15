@@ -54,6 +54,21 @@ Click to "insert the disk" (this also unlocks audio), pick a start point with th
 Gamepads work too (left stick = stick, right stick = rudder, triggers = throttle,
 A launch, B hook, X flaps, Y gear, LB speed brake, RB brakes, Back = view, Start = pause).
 
+### iPad / touch
+On a tablet the game shows touch controls (they hide when a physical key is pressed and
+come back on the next touch):
+
+- **Stick** - touch anywhere on the right half and drag; it springs back to centre when you
+  let go (down = pull). On the wheels, left / right also steers the nose wheel.
+- **Throttle** - the slider on the left edge. Drag it up; it stops at the MIL line, and
+  pushing through the detent above that lights the afterburner.
+- **Buttons** - GEAR, FLAPS (cycles AUTO / HALF / FULL), HOOK, SPD BRK, ATC and BRAKES (hold)
+  top left; pause, VIEW and LAUNCH (P.BRAKE on land) top right. A RESPOT button appears
+  after a crash or an arrested landing.
+- **Drag** the open view to look around the cockpit, or to orbit in the orbit view (pinch to zoom).
+- **Pause** (II) has graphics, sound, respot, quit and full-screen buttons. For the most
+  screen, use Safari's Share > Add to Home Screen.
+
 ### Catapult launch
 You start on cat 1 with flaps HALF. Run the throttle up to MIL (wait for ~100% RPM),
 then press **C**. The steam catapult takes you to ~160 kt in 94 m; hands off - the

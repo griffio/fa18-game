@@ -16,6 +16,7 @@ import { Cockpit } from './cockpit.js';
 import { AudioEngine } from './audio.js';
 import { Music } from './music.js';
 import { Input } from './input.js';
+import { TouchControls } from './touch.js';
 import { LSO } from './lso.js';
 import { textWidth } from './vfont.js';
 import { MOFFETT, LANDMARKS } from './geo.js';
@@ -91,6 +92,7 @@ class Game {
     this.ac = new Aircraft();
     this.lso = new LSO(this);
     this.ctl = { pitch: 0, roll: 0, yaw: 0, throttle: 0, gear: true, flaps: 1, hook: false, speedBrake: false, brakes: 1 };
+    this.touch = new TouchControls(this);
     this.env = {
       wind: (p, t) => this.wind(p, t),
       surface: (p) => this.surface(p),
@@ -102,9 +104,12 @@ class Game {
     this.respot();
     this.loading.style.display = 'none';
     window.addEventListener('resize', () => this.R.resize());
-    this.canvas.addEventListener('mousedown', (e) => this.onClick(e));
+    // a tap also sends compatibility mouse events afterwards; only act on it once
+    this.lastTouchT = -1e9;
+    this.canvas.addEventListener('mousedown', (e) => { if (performance.now() - this.lastTouchT > 800) this.onClick(e); });
+    this.initTouchDrag();
     let drag = null;
-    this.canvas.addEventListener('mousedown', (e) => { if (!this.input.mouse.locked) drag = [e.clientX, e.clientY]; });
+    this.canvas.addEventListener('mousedown', (e) => { if (!this.input.mouse.locked && performance.now() - this.lastTouchT > 800) drag = [e.clientX, e.clientY]; });
     window.addEventListener('mouseup', () => (drag = null));
     window.addEventListener('mousemove', (e) => {
       if (drag && (this.view === 3 || this.state === 'title')) {
@@ -124,6 +129,51 @@ class Game {
     this.canvas.addEventListener('wheel', (e) => { if (this.view === 3 && !this.mouseFlight) this.orbit.dist = clamp(this.orbit.dist * (e.deltaY > 0 ? 1.12 : 0.89), 12, 600); });
     this.last = performance.now();
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  // Touch on the open canvas (outside the stick and throttle): tap = click; one finger
+  // drags the orbit camera or looks around the cockpit (springs back), two pinch-zoom.
+  initTouchDrag() {
+    const pts = new Map();
+    let pinch = 0;
+    const c = this.canvas;
+    c.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      e.preventDefault();
+      this.lastTouchT = performance.now();
+      try { c.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+      if (!pts.size) this.onClick(e);
+      pts.set(e.pointerId, [e.clientX, e.clientY]);
+      pinch = 0;
+    });
+    c.addEventListener('pointermove', (e) => {
+      const p = pts.get(e.pointerId);
+      if (!p) return;
+      const dx = e.clientX - p[0], dy = e.clientY - p[1];
+      p[0] = e.clientX; p[1] = e.clientY;
+      const orbit = this.view === 3 || this.state === 'title';
+      if (pts.size >= 2) {
+        const [a, b] = [...pts.values()];
+        const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        if (pinch && orbit) this.orbit.dist = clamp(this.orbit.dist * pinch / Math.max(d, 1), 12, 600);
+        pinch = d;
+      } else if (orbit) {
+        this.orbit.yaw -= dx * 0.006;
+        this.orbit.pitch = clamp(this.orbit.pitch + dy * 0.005, -1.2, 1.4);
+      } else if (this.state === 'flight' && this.view <= 1) {
+        this.look.dyaw = clamp(this.look.dyaw - dx * 0.006, -2.6, 2.6);
+        this.look.dpitch = clamp(this.look.dpitch - dy * 0.006, -0.5, 1.2);
+      }
+    });
+    const up = (e) => {
+      if (!pts.delete(e.pointerId)) return;
+      pinch = 0;
+      // iOS only unlocks audio from a touchend-type gesture
+      if (this.state !== 'boot') this.audio.init();
+      if (!pts.size) { this.look.dyaw = 0; this.look.dpitch = 0; }
+    };
+    c.addEventListener('pointerup', up);
+    c.addEventListener('pointercancel', up);
   }
 
   onClick(e) {
@@ -152,8 +202,9 @@ class Game {
     this.view = 0;
     this.respot();
     this.msg(BASES[this.base].name, 'big');
-    if (this.base === 'moffett') this.later(1.2, () => this.msg('PARKING BRAKE SET  ·  THROTTLE TO MIL (+)  ·  C RELEASES BRAKES  ·  ROTATE AT 145 KT', 'hint', 8));
-    else this.later(1.2, () => this.msg('THROTTLE TO MIL (+)  ·  FLAPS HALF  ·  PRESS C TO LAUNCH', 'hint', 7));
+    if (this.base === 'moffett') this.later(1.2, () => this.msg(this.hint('PARKING BRAKE SET  ·  THROTTLE TO MIL (+)  ·  C RELEASES BRAKES  ·  ROTATE AT 145 KT',
+      'PARKING BRAKE SET  ·  THROTTLE TO MIL  ·  P.BRAKE RELEASES  ·  ROTATE AT 145 KT'), 'hint', 8));
+    else this.later(1.2, () => this.msg(this.hint('THROTTLE TO MIL (+)  ·  FLAPS HALF  ·  PRESS C TO LAUNCH', 'THROTTLE TO MIL  ·  FLAPS HALF  ·  TAP LAUNCH'), 'hint', 7));
   }
   selectBase(b) {
     this.settings.base = b;
@@ -162,6 +213,10 @@ class Game {
     this.audio.play('click', { gain: 0.4, ch: 0 });
   }
   get base() { return BASES[this.settings.base] ? this.settings.base : 'cv'; }
+  viewName() { return VIEWS[this.view]; }
+  styleName() { return STYLES[this.settings.style].name; }
+  // on-screen hint wording for the keyboard or the touch controls
+  hint(keys, touch) { return this.touch?.on ? touch : keys; }
 
   // ------------------------------------------------------------------ environment
   wind(p, t) {
@@ -367,6 +422,8 @@ class Game {
     if (this.autopilot) this.autopilot(ac, ctl, dt);
     const brake = this.input.down('Space') || this.input.padBrake;
     ctl.brakes = brake || this.parkBrake || (ac.arrest && ac.arrest.stopped) || ac.state === 'cat' ? 1 : 0;
+    // touch stick: on the wheels, left / right also steers the nose wheel (no rudder pedals)
+    if (ac.wow && this.input.touch.x) ctl.yaw = clamp(ctl.yaw + this.input.touch.x, -1, 1);
     if (ac.apc) this.input.throttle = ac.apcThrottle ?? this.input.throttle;
     this.acc = (this.acc || 0) + dt;
     let steps = 0;
@@ -396,7 +453,7 @@ class Game {
         case 'catStart': this.msg('LAUNCH!', 'big', 2); break;
         case 'catEnd': {
           this.fx.steam(this.cv.toWorld([7, DECK_H, -150]), this.cv.toWorld([7, DECK_H, -60]), this.cv.velocity());
-          this.msg('AIRBORNE - GEAR UP (G)  ·  FLAPS AUTO (SHIFT+F)  ·  ACCELERATE', 'hint', 6);
+          this.msg(this.hint('AIRBORNE - GEAR UP (G)  ·  FLAPS AUTO (SHIFT+F)  ·  ACCELERATE', 'AIRBORNE - GEAR UP  ·  FLAPS AUTO  ·  ACCELERATE'), 'hint', 6);
           break;
         }
         case 'touch': {
@@ -421,7 +478,7 @@ class Game {
           this.lso.onTrap(e.wire, ac, this.cv);
           break;
         case 'trapStop':
-          this.msg('ARRESTED - THROTTLE IDLE.  R: RESPOT ON CAT   H: HOOK UP & TAXI', 'hint', 8);
+          this.msg(this.hint('ARRESTED - THROTTLE IDLE.  R: RESPOT ON CAT   H: HOOK UP & TAXI', 'ARRESTED - THROTTLE IDLE.  RESPOT ON CAT, OR HOOK UP & TAXI'), 'hint', 8);
           break;
         case 'airborne':
           if (this.lastWowDeck && this.lso.state === 'touch') this.lso.onBolter();
@@ -452,7 +509,7 @@ class Game {
     }
     this.lso.onCrash(e.reason);
     this.msg(e.reason, 'big', 99);
-    this.later(1.5, () => this.msg('PRESS R TO RESPOT - ' + BASES[this.base].short, 'hint', 99));
+    this.later(1.5, () => this.msg(this.hint('PRESS R TO RESPOT', 'TAP RESPOT') + ' - ' + BASES[this.base].short, 'hint', 99));
     if (this.view <= 2 || this.view === 5) this.view = 3;
     this.orbit = { yaw: Math.atan2(-e.vel[0], e.vel[2]) + 0.6, pitch: 0.35, dist: 140 };
     this.input.unlockMouse();
@@ -622,6 +679,7 @@ class Game {
     this.last = now;
     dt = clamp(dt, 0, 0.05);
     this.handleKeys();
+    this.touch.update();
     if (this.state === 'boot') { this.render(dt); return; }
     if (!this.paused) {
       this.time += dt;
@@ -727,7 +785,7 @@ class Game {
       } else this.drawExternalInfo();
       if (this.paused) { R.flushScreen(); this.drawPause(); } else this.drawMessages();
     }
-    if (this.state === 'flight' && this.settings.invert) this.d2.text('PITCH INV', 20, 44, 11, [1, 0.6, 0.2, 0.9]);
+    if (this.state === 'flight' && this.settings.invert) this.d2.text('PITCH INV', 20 + this.touch.leftInset * 2, 44, 11, [1, 0.6, 0.2, 0.9]);
     if (this.showPerf) this.drawPerf();
     R.flushScreen();
     R.endFrame();
@@ -762,14 +820,26 @@ class Game {
     const d = this.d2, W = this.R.cssW, H = this.R.cssH;
     const panelH = this.inside && this.view === 0 ? this.cockpit.height(H) : 0;
     let y = this.inside ? H * 0.045 : H * 0.16;
+    const lx = 20 + this.touch.leftInset;
     for (const m of this.messages) {
       const age = this.time - m.t;
       if (age > m.dur) continue;
       const a = clamp(m.dur - age, 0, 1);
       const sz = m.kind === 'big' ? 20 : m.kind === 'hint' ? 12 : 13;
       const col = m.kind === 'warn' ? [1, 0.6, 0.15, a] : m.kind === 'hint' ? [0.75, 0.9, 1, a] : m.kind === 'big' ? [1, 1, 1, a] : [0.85, 1, 0.85, a];
-      d.text(m.text, W / 2, y, sz, col, 'center', m.kind === 'big' ? 2 : 1.4);
-      y += sz * 1.8;
+      // with touch controls up, keep centred text between the button columns: long
+      // hints break in two at a separator, then shrink if still too wide
+      let rows = [m.text];
+      const maxW = W - 2 * 170;
+      if (this.touch.leftInset && textWidth(m.text, sz) > maxW && m.text.includes('  ·  ')) {
+        const parts = m.text.split('  ·  '), h = Math.ceil(parts.length / 2);
+        rows = [parts.slice(0, h).join('  ·  '), parts.slice(h).join('  ·  ')];
+      }
+      for (const row of rows) {
+        const s = this.touch.leftInset ? clamp(sz * maxW / Math.max(1, textWidth(row, sz)), 8, sz) : sz;
+        d.text(row, W / 2, y, s, col, 'center', m.kind === 'big' ? 2 : 1.4);
+        y += s * 1.8;
+      }
     }
     // virtual stick position (mouse flight)
     if (this.mouseFlight) {
@@ -787,7 +857,7 @@ class Game {
       const r = this.radioLog[i];
       const age = this.time - r.t;
       if (age > 6) continue;
-      d.text(r.text, 20, ry, 12, r.who === 'pilot' ? [0.7, 0.85, 1, clamp(6 - age, 0, 1)] : [1, 0.85, 0.4, clamp(6 - age, 0, 1)], 'left', 1.3);
+      d.text(r.text, lx, ry, 12, r.who === 'pilot' ? [0.7, 0.85, 1, clamp(6 - age, 0, 1)] : [1, 0.85, 0.4, clamp(6 - age, 0, 1)], 'left', 1.3);
       ry -= 20;
     }
     // LSO grade card
@@ -795,7 +865,7 @@ class Game {
     if (gs && this.time - gs.t < 9) {
       const a = clamp(9 - (this.time - gs.t), 0, 1);
       const bw = Math.max(320, textWidth(gs.text, 15) + 40);
-      const x = this.inside ? 16 : W / 2 - bw / 2, y0 = this.inside ? H * 0.11 : H * 0.3;
+      const x = this.inside ? lx - 4 : W / 2 - bw / 2, y0 = this.inside ? Math.max(H * 0.11, this.touch.leftInset ? 190 : 0) : H * 0.3;
       const cxg = x + bw / 2;
       d.fillRect(x, y0, bw, 70, [0, 0, 0, 0.55 * a]);
       d.rect(x, y0, bw, 70, [1, 0.8, 0.3, a], 1.5);
@@ -821,7 +891,8 @@ class Game {
   drawExternalInfo() {
     const d = this.d2, ac = this.ac, W = this.R.cssW, H = this.R.cssH;
     const c = [0.85, 0.95, 1, 0.9];
-    d.text(VIEWS[this.view] + ' VIEW', 20, 20, 13, c);
+    if (this.touch.leftInset) d.text(VIEWS[this.view] + ' VIEW', W / 2, 20, 13, c, 'center');
+    else d.text(VIEWS[this.view] + ' VIEW', 20, 20, 13, c);
     const e = ac.eulers;
     const y = H - 28;
     const items = [
@@ -830,7 +901,7 @@ class Game {
       `${ac.ab > 0.05 ? 'AB' : 'THR'} ${Math.round(Math.min(ac.thrCmd ?? 0, 1) * 100)}%`,
       `FUEL ${Math.round(ac.fuel * 2.2046)}`,
     ];
-    let x = 20;
+    let x = 20 + this.touch.leftInset;
     for (const s of items) { d.text(s, x, y, 12, c); x += textWidth(s, 12) + 26; }
     const flags = [ac.gear > 0.5 ? 'GEAR' : '', ['', 'FLAPS 1/2', 'FLAPS FULL'][ac.flapSel], ac.hookCmd ? 'HOOK' : '', ac.sb > 0.1 ? 'SPD BRK' : ''].filter(Boolean).join('  ');
     d.text(flags, W - 20, y, 12, [1, 0.8, 0.3, 0.9], 'right');
@@ -849,7 +920,7 @@ class Game {
     d.text('F/A-18', cx, cy + s * 0.32, s * 0.2, [1, 1, 1, 1], 'center', 1.6);
     const blink = Math.floor(t * 2) % 2;
     d.text('INSERT DISK', cx, cy + s * 1.35, 20, [1, 1, 1, 1], 'center', 2);
-    if (blink) d.text('CLICK OR PRESS ANY KEY TO BOOT', cx, cy + s * 1.35 + 34, 13, [0.6, 0.85, 1, 1], 'center');
+    if (blink) d.text(this.hint('CLICK OR PRESS ANY KEY TO BOOT', 'TAP TO BOOT'), cx, cy + s * 1.35 + 34, 13, [0.6, 0.85, 1, 1], 'center');
   }
 
   drawTitle() {
@@ -866,7 +937,21 @@ class Game {
     d.text('F/A-18', W / 2, ty - sz * 0.55, sz * 0.4, cyan, 'center', 2);
     d.text('BAY AREA  ·  CARRIER QUALIFICATION', W / 2, ty + sz * 1.25, sz * 0.24, cyan, 'center', 1.5);
     // menu panel: sized to fit its text (shrinks the font on narrow screens)
-    const lines = [
+    const lines = this.touch.on ? [
+      ['TAP', 'START SOLO FLIGHT'],
+      ['START POINT', null],
+      ['', ''],
+      ['RIGHT THUMB', 'STICK - TOUCH AND DRAG ON THE RIGHT (DOWN = PULL)'],
+      ['LEFT SLIDER', 'THROTTLE - DETENT AT MIL, PUSH THROUGH FOR AB'],
+      ['GEAR FLAPS HOOK', 'SWITCHES - LIT WHEN DOWN / OUT'],
+      ['LAUNCH', 'SALUTE THE CAT OFFICER  /  PARKING BRAKE ON LAND'],
+      ['BRAKES', 'HOLD FOR WHEEL BRAKES'],
+      ['ATC', 'APPROACH POWER COMPENSATOR'],
+      ['VIEW', 'COCKPIT HUD CHASE ORBIT TOWER FLYBY LSO SHIP'],
+      ['DRAG', 'LOOK AROUND THE COCKPIT  /  ORBIT, PINCH TO ZOOM'],
+      ['ON THE GROUND', 'STICK LEFT / RIGHT ALSO STEERS THE NOSE WHEEL'],
+      ['II', 'PAUSE - GRAPHICS, SOUND, RESPOT, QUIT'],
+    ] : [
       ['ENTER / CLICK', 'START SOLO FLIGHT'],
       ['LEFT / RIGHT', null],                       // start point selector
       ['', ''],
@@ -935,7 +1020,7 @@ class Game {
       ['1-8  V', 'VIEWS'], ['Q E', 'LOOK LEFT / RIGHT'], ['`', 'PERFORMANCE STATS'], ['[ ]', 'MAP RANGE'], ['K L D', 'GRAPHICS STYLE / SCANLINES / DOTS'], ['M O SHIFT+I', 'MOUSE / SELF-CENTRE / INVERT'],
       ['N J', 'SOUND / RADIO VOICES'],
     ];
-    keys.forEach(([k, v], i) => {
+    if (!this.touch.on) keys.forEach(([k, v], i) => {
       const y = H * 0.5 + i * 18;
       d.text(k, W / 2 - 10, y, 11, [1, 0.8, 0.3, 1], 'right');
       d.text(v, W / 2 + 10, y, 11, [0.85, 0.95, 1, 1], 'left');
@@ -945,6 +1030,7 @@ class Game {
     const log = this.lso.log.slice(-8);
     if (!log.length) d.text('NO PASSES YET - TRAP ABOARD CVN-68 TO GET GRADED', W / 2, H * 0.26, 12, [0.6, 0.7, 0.8, 1], 'center');
     log.forEach((r, i) => d.text(r.text, W / 2, H * 0.26 + i * 20, 12, [0.85, 0.95, 1, 1], 'center'));
+    if (this.touch.on) return;
     d.text('P / ESC  RESUME     Q  QUIT TO TITLE     R  RESPOT', W / 2, H * 0.86, 13, [0.6, 0.85, 1, 1], 'center');
     d.text('CARRIER LANDING: GEAR + FLAPS FULL + HOOK, 8.1 DEG AOA (AMBER DONUT), FLY THE BALL. FULL POWER ON TOUCHDOWN.', W / 2, H * 0.92, 11, [0.7, 0.8, 0.9, 1], 'center');
   }

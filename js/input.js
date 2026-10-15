@@ -17,6 +17,7 @@ export class Input {
     this.padIndex = -1;
     this.padPrev = [];
     this.abDetent = false;
+    this.touch = { x: 0, y: 0 };   // on-screen stick (touch.js), -1..1, y down = pull
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Backspace' || e.code.startsWith('F') && e.code.length <= 3) e.preventDefault();
       if (!this.keys.has(e.code)) this.pressed.push({ code: e.code, shift: e.shiftKey, key: e.key });
@@ -78,6 +79,13 @@ export class Input {
     }
     this.mouse.dx = 0; this.mouse.dy = 0;
 
+    // touch stick: same response curve as a gamepad stick
+    const curve = (v) => v * (0.4 + 0.6 * v * v);
+    if (this.touch.x || this.touch.y) {
+      roll = clamp(roll + curve(this.touch.x), -1, 1);
+      pitch = clamp(pitch + curve(this.touch.y) * (this.invert ? -1 : 1), -1, 1);
+    }
+
     // throttle
     const thUp = this.down('Equal') || this.down('NumpadAdd') || this.down('PageUp');
     const thDn = this.down('Minus') || this.down('NumpadSubtract') || this.down('PageDown');
@@ -101,7 +109,6 @@ export class Input {
     if (pad) {
       const dz = (v) => (Math.abs(v) < 0.08 ? 0 : (v - Math.sign(v) * 0.08) / 0.92);
       const ax = pad.axes;
-      const curve = (v) => v * (0.4 + 0.6 * v * v);
       if (Math.abs(dz(ax[0])) > 0) roll = clamp(roll + curve(dz(ax[0])), -1, 1);
       if (Math.abs(dz(ax[1])) > 0) pitch = clamp(pitch + curve(dz(ax[1])) * (this.invert ? -1 : 1), -1, 1);
       if (ax.length > 2 && Math.abs(dz(ax[2])) > 0) yaw = clamp(yaw + dz(ax[2]), -1, 1);
