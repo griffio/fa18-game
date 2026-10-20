@@ -62,9 +62,19 @@ class Game {
 
   loadSettings() {
     const def = { style: 'hybrid', dots: true, scan: true, invert: false, voice: true, sound: true, mouseCenter: true, base: 'cv' };
-    try { return Object.assign(def, JSON.parse(localStorage.getItem('fa18-settings-v2') || '{}')); } catch { return def; }
+    let s = def;
+    try { s = Object.assign(def, JSON.parse(localStorage.getItem('fa18-settings-v2') || '{}')); } catch { /* keep the defaults */ }
+    if (!STYLES[s.style]) s.style = 'hybrid';   // stale / edited storage must not break the first frame
+    return s;
   }
   saveSettings() { try { localStorage.setItem('fa18-settings-v2', JSON.stringify(this.settings)); } catch { /* ignore */ } }
+  // leave a message on the loading screen (boot failure, lost GL context)
+  fatal(title, detail) {
+    const L = this.loading;
+    L.style.display = '';
+    L.innerHTML = '<div class="logo"></div><div class="msg"></div>';
+    L.firstChild.textContent = title; L.lastChild.textContent = detail;
+  }
 
   async init() {
     const step = (msg) => new Promise((r) => { this.loading.querySelector('.msg').textContent = msg; setTimeout(r, 30); });
@@ -103,6 +113,8 @@ class Game {
     this.orbit = { yaw: 2.4, pitch: 0.25, dist: 32 };
     this.respot();
     this.loading.style.display = 'none';
+    this.R.onLost = () => { if (this.audio.ctx) this.audio.ctx.suspend(); this.fatal('GRAPHICS CONTEXT LOST', 'RELOAD THE PAGE TO CONTINUE'); };
+    this.R.onRestored = () => location.reload();
     window.addEventListener('resize', () => this.R.resize());
     // a tap also sends compatibility mouse events afterwards; only act on it once
     this.lastTouchT = -1e9;
@@ -674,6 +686,7 @@ class Game {
 
   // ------------------------------------------------------------------ frame
   frame(now) {
+    if (this.R.lost) return;   // every GL resource is gone; the page reloads when the context comes back
     requestAnimationFrame((t) => this.frame(t));
     let dt = (now - this.last) / 1000;
     this.last = now;
@@ -1093,5 +1106,5 @@ Game.prototype.debugAutoLand = function () {
   };
 };
 const game = new Game();
-game.init();
+game.init().catch((e) => { console.error(e); game.fatal('BOOT FAILURE', String(e && e.message || e)); });
 window.game = game;

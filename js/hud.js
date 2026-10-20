@@ -106,7 +106,7 @@ export class HUD {
         L(ox, oy, ox + nx * tick * tk, oy + ny * tick * tk, GRN, 1.5);
         const lx = x2 + dx * 12, ly = y2 + dy * 12;
         if (lx > lrect.x0 && lx < lrect.x1 && ly > lrect.y0 && ly < lrect.y1) {
-          d.textRot(Math.abs(th) + '', lx, ly, fs * 0.8, GRN, Math.atan2(ey, ex) + (side < 0 ? 0 : 0));
+          d.textRot(Math.abs(th) + '', lx, ly, fs * 0.8, GRN, Math.atan2(ey, ex));
         }
       }
     }
@@ -166,7 +166,7 @@ export class HUD {
     const altx = bx + half - 6;
     d.rect(altx - 72, ay, 72, fs + 10, GRN, 1.4);
     const altStr = Math.round(alt / 10) * 10;
-    txt(altStr.toLocaleString('en-US').replace(',', ','), altx - 6, ay + 5, fs, GRN, 'right');
+    txt(altStr.toLocaleString('en-US'), altx - 6, ay + 5, fs, GRN, 'right');
     const ralt = (ac.radarAlt ?? ac.pos[1]) / FT;
     if (ralt < 5000) txt('R ' + Math.max(0, Math.round(ralt)), altx - 6, ay - fs - 8, fs * 0.85, GRN, 'right');
     const vsi = ac.vel[1] / FT * 60;

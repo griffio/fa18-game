@@ -4,6 +4,7 @@
 import { rng } from './math.js';
 
 const TICK = 0.02, SPEED = 6, ROW = TICK * SPEED;
+const LOOKAHEAD = 1.2;   // seconds of notes queued ahead: outlasts background-tab timer throttling (1 s)
 const SR = 22050;
 const NOTE = { C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5, 'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11 };
 const freq = (n) => {
@@ -43,7 +44,9 @@ export class Music {
   constructor(audio) {
     this.a = audio;
     this.playing = false;
+    this.active = new Set();   // sources queued ahead, so stop() can silence them
   }
+  track(src) { this.active.add(src); src.onended = () => this.active.delete(src); }
 
   samples() {
     if (this.S) return;
@@ -104,6 +107,7 @@ export class Music {
       for (let i = 0; i < n; i++) src.playbackRate.setValueAtTime(opts.arp[i % opts.arp.length] / sample.base, t + i * TICK);
     }
     src.start(t); src.stop(t + dur + 0.2);
+    this.track(src);
   }
 
   hit(name, t, gain) {
@@ -113,6 +117,7 @@ export class Music {
     const g = ctx.createGain(); g.gain.value = gain;
     src.connect(g).connect(this.mch[name === 'h' ? 1 : 2]);
     src.start(t);
+    this.track(src);
   }
 
   start() {
@@ -125,7 +130,7 @@ export class Music {
     this.bar = 0;
     this.t0 = ctx.currentTime + 0.1;
     this.next = this.t0;
-    this.timer = setInterval(() => this.schedule(), 40);
+    this.timer = setInterval(() => this.schedule(), 100);
     this.schedule();
   }
   stop() {
@@ -134,11 +139,14 @@ export class Music {
     clearInterval(this.timer);
     const ctx = this.a.ctx;
     this.a.musicBus.gain.setTargetAtTime(0, ctx.currentTime, 0.3);
+    // notes already queued would otherwise play over the next start()
+    for (const s of this.active) { try { s.stop(ctx.currentTime + 0.5); } catch { /* already stopped */ } }
+    this.active.clear();
   }
   schedule() {
     if (!this.playing) return;
     const ctx = this.a.ctx;
-    while (this.next < ctx.currentTime + 0.4) {
+    while (this.next < ctx.currentTime + LOOKAHEAD) {
       this.playBar(SONG[this.bar % SONG.length], this.next);
       this.next += 16 * ROW;
       this.bar++;

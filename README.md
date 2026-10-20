@@ -125,6 +125,10 @@ Validated against reference performance (run `node tools/fmtest.mjs`; `tools/lan
 Mach 0.95 MIL / 1.10 AB at sea level, Mach 1.69 at 36,000 ft, ~47,000 fpm max climb,
 220°/s roll, 7.5 g, 132 KCAS on-speed approach at ~79% RPM.
 
+`npm test` runs the physics and collision checks. With the game served locally,
+`node tools/smoke.mjs http://localhost:8000/index.html` flies a catapult shot in headless Chrome,
+cycles the graphics styles and fails on any console error, GL error or unhandled lost context.
+
 ## Files
 
 ```

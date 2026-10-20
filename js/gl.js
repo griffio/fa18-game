@@ -52,8 +52,8 @@ void main(){
   gl_Position = uVP*w; vW = gl_Position.w;
 }`;
 const FOG = `
-uniform vec3 uFog; uniform float uFogDen; uniform float uHaze;
-float fogF(float d, float h){
+uniform vec3 uFog; uniform float uFogDen;
+float fogF(float d){
   float x = d*uFogDen;
   float f = 1.0 - exp(-x*x*0.6 - x*0.35);
   return clamp(f,0.0,1.0);
@@ -74,7 +74,7 @@ void main(){
   vec3 c = mix(vCol.rgb, vCol.rgb*sh, vCol.a);
   c = mix(c, uFillCol*(0.55+0.45*sh), uFillMix*vCol.a);
   c = mix(c, uTint.rgb, uTint.a);
-  float fg = fogF(length(vRel), 0.0);
+  float fg = fogF(length(vRel));
   c = mix(c, uFog, fg);
   o = vec4(c, 1.0);
   og = vec4(c*(1.0-vCol.a)*uGlow*(1.0-uTint.a)*(1.0-fg), 1.0);
@@ -85,15 +85,15 @@ const TERR_VS = `#version 300 es
 layout(location=0) in vec3 aPos;
 layout(location=1) in float aMat;
 uniform mat4 uVP; uniform vec3 uCam;
-out vec3 vRel; out float vW; flat out float vH; flat out float vMat; out float vY; out vec2 vWXZ;
+out vec3 vRel; out float vW; flat out float vH; flat out float vMat; out vec2 vWXZ;
 void main(){
   vec3 r = aPos - uCam;
-  vRel = r; vH = aPos.y; vMat = aMat; vY = aPos.y; vWXZ = aPos.xz;
+  vRel = r; vH = aPos.y; vMat = aMat; vWXZ = aPos.xz;
   gl_Position = uVP*vec4(r,1.0); vW = gl_Position.w;
 }`;
 const TERR_FS = `#version 300 es
 precision highp float;
-in vec3 vRel; in float vW; flat in float vH; flat in float vMat; in float vY; in vec2 vWXZ;
+in vec3 vRel; in float vW; flat in float vH; flat in float vMat; in vec2 vWXZ;
 uniform vec3 uSun; uniform float uFillMix; uniform vec3 uFillCol; uniform float uLevels;
 uniform float uDots; uniform vec3 uLandDot; uniform float uLandDotMix; uniform float uDotGlow;
 ${LOGDEPTH}
@@ -127,7 +127,7 @@ void main(){
   float dt = uDots > 0.0 ? dotField(vWXZ) * uDots : 0.0;
   vec3 dc = mix(c * 0.45, uLandDot, uLandDotMix);
   c = mix(c, dc, dt);
-  float fg = fogF(length(vRel), vY);
+  float fg = fogF(length(vRel));
   c = mix(c, uFog, fg);
   o = vec4(c, 1.0);
   og = vec4(uLandDot * dt * uDotGlow * (1.0 - fg), 1.0);
@@ -167,6 +167,8 @@ void main(){
   float dmid = length(mix(wa.xyz, wb.xyz, 0.5));
   if (aWidth < 1.05) vThin *= clamp((uDetailFar - dmid)/(uDetailFar*0.5), 0.0, 1.0);
   else if (aWidth < 1.25) vThin *= clamp((uDetailFar*3.0 - dmid)/(uDetailFar*1.5), 0.0, 1.0);
+  // fully faded detail (or invisible colour): collapse the quad so nothing is rasterised
+  if (vThin <= 0.0 || aCol.a <= 0.0){ gl_Position = vec4(2.0,2.0,2.0,1.0); return; }
   vCol = aCol;
   gl_Position = vec4(p/uRes*2.0-1.0, 0.0, 1.0);
 }`;
@@ -183,7 +185,7 @@ void main(){
   float dd = length(vec2(vLP.x - a, vLP.y));
   float cov = clamp(vHW + 0.5 - dd, 0.0, 1.0) * vThin;
   if(cov <= 0.0) discard;
-  float f = fogF(vDist, 0.0);
+  float f = fogF(vDist);
   float al = vCol.a * cov * (1.0 - f*0.97);
   vec3 c = vCol.rgb * uIntensity;
   c = mix(c, uFog, f*(1.0-uAdd));
@@ -232,7 +234,7 @@ void main(){
 const SEA_FS = `#version 300 es
 precision highp float;
 in vec3 vRel; in vec2 vWXZ; in float vW;
-uniform vec3 uSun; uniform vec3 uSea; uniform vec3 uSeaFar; uniform vec3 uGrid; uniform float uGridA; uniform float uTime;
+uniform vec3 uSun; uniform vec3 uSea; uniform vec3 uSeaFar; uniform vec3 uGrid; uniform float uGridA;
 uniform float uDots; uniform vec3 uSeaDot; uniform float uDotGlow;
 ${LOGDEPTH}
 ${FOG}
@@ -259,7 +261,7 @@ void main(){
   }
   float dt = uDots > 0.0 ? dotField(vWXZ) * uDots : 0.0;
   c = mix(c, uSeaDot, dt);
-  float fg = fogF(d, 0.0);
+  float fg = fogF(d);
   c = mix(c, uFog, fg);
   o = vec4(c, 1.0);
   og = vec4((uGrid*glow + uSeaDot*dt*uDotGlow)*(1.0-fg), 1.0);
@@ -402,6 +404,11 @@ export class Renderer {
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, powerPreference: 'high-performance', preserveDrawingBuffer: false });
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     this.gl = gl;
+    // a lost context (GPU reset, iOS reclaiming memory) takes every buffer, texture and
+    // program with it: stop drawing and let the game decide what to tell the player
+    this.lost = false;
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; if (this.onLost) this.onLost(); });
+    canvas.addEventListener('webglcontextrestored', () => { if (this.onRestored) this.onRestored(); });
     this.hasFloat = !!gl.getExtension('EXT_color_buffer_float');
     gl.getExtension('OES_texture_float_linear');
     this.progMesh = program(gl, MESH_VS, MESH_FS);
@@ -463,7 +470,7 @@ export class Renderer {
     this.resize();
   }
 
-  setStyle(name) { this.style = STYLES[name]; this.styleName = name; }
+  setStyle(name) { if (!STYLES[name]) name = 'hybrid'; this.style = STYLES[name]; this.styleName = name; }
 
   resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -650,7 +657,6 @@ export class Renderer {
     gl.uniform1f(u.uR, 240000);
     gl.uniform3fv(u.uSea, s.sea); gl.uniform3fv(u.uSeaFar, s.seaFar);
     gl.uniform3fv(u.uGrid, s.grid); gl.uniform1f(u.uGridA, s.gridA);
-    gl.uniform1f(u.uTime, this.time);
     gl.uniform1f(u.uPx, this.pxScale);
     gl.uniform1f(u.uDots, this.dotsOn === false ? 0 : (s.dots || 0));
     gl.uniform3fv(u.uSeaDot, s.seaDot || [1, 1, 1]);
@@ -840,6 +846,9 @@ export class Renderer {
     gl.readBuffer(gl.COLOR_ATTACHMENT1);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.glow.fb);
     gl.blitFramebuffer(0, 0, this.W, this.H, 0, 0, this.W, this.H, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    // the multisampled colour and depth buffers are finished with: on tile-based GPUs
+    // (Apple, Mali, Adreno) this lets the driver skip writing them back to memory
+    gl.invalidateFramebuffer(gl.READ_FRAMEBUFFER, [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.DEPTH_ATTACHMENT]);
     gl.readBuffer(gl.COLOR_ATTACHMENT0);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);

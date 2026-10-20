@@ -391,7 +391,7 @@ export class Aircraft {
     // ---------------- yaw: sideslip suppression + turn coordination, pedals command beta
     const bCmd = ctl.yaw * (this.pa ? 10 : 6) * DEG * clamp(9000 / Math.max(qbar, 1), 0.15, 1);
     const ca = Math.max(Math.cos(a), 0.25);
-    const sideAcc = aB[0] + 0; // body lateral specific acceleration incl. gravity
+    const sideAcc = aB[0];     // body lateral specific acceleration incl. gravity
     const rDes = (sideAcc / V + p * Math.sin(a) + 2.2 * (be - bCmd)) / ca;
     const rdotDes = 4.5 * (rDes - r);
     const CnNeed = (Ib[1] * rdotDes) / (qS * b) - (Cnb * Math.sin(be) + Cnr * rh + Cnp * ph + CnDa * da);

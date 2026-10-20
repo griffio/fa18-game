@@ -19,7 +19,7 @@ export class Input {
     this.abDetent = false;
     this.touch = { x: 0, y: 0 };   // on-screen stick (touch.js), -1..1, y down = pull
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Backspace' || e.code.startsWith('F') && e.code.length <= 3) e.preventDefault();
+      if (e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Backspace' || /^F[1-8]$/.test(e.code)) e.preventDefault();
       if (!this.keys.has(e.code)) this.pressed.push({ code: e.code, shift: e.shiftKey, key: e.key });
       this.keys.add(e.code);
     });
@@ -41,7 +41,11 @@ export class Input {
     window.addEventListener('gamepaddisconnected', () => { this.padIndex = -1; });
   }
 
-  lockMouse() { if (this.canvas.requestPointerLock) this.canvas.requestPointerLock(); }
+  lockMouse() {
+    if (!this.canvas.requestPointerLock) return;
+    const p = this.canvas.requestPointerLock();   // newer browsers return a promise that rejects when refused
+    if (p && p.catch) p.catch(() => {});
+  }
   unlockMouse() { if (document.exitPointerLock) document.exitPointerLock(); }
 
   consume() { const p = this.pressed; this.pressed = []; return p; }
@@ -102,7 +106,8 @@ export class Input {
     }
 
     // gamepad
-    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    let pads = [];
+    try { pads = navigator.getGamepads ? navigator.getGamepads() : []; } catch { /* blocked by permissions policy (iframe) */ }
     let pad = this.padIndex >= 0 ? pads[this.padIndex] : null;
     if (!pad) for (const p of pads) if (p) { pad = p; this.padIndex = p.index; break; }
     this.padButtons = [];
