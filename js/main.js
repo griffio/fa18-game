@@ -40,7 +40,7 @@ class Game {
     this.canvas = document.getElementById('gl');
     this.loading = document.getElementById('loading');
     try {
-      this.R = new Renderer(this.canvas);
+      this.R = new Renderer(this.canvas, document.getElementById('ui'));
     } catch (e) {
       this.loading.innerHTML = '<p>WebGL2 is required.<br><small>' + e.message + '</small></p>';
       throw e;
@@ -569,6 +569,8 @@ class Game {
     const lookAt = (from, to, up = [0, 1, 0]) => qlookDir(vsub(to, from), up);
     const zoomFov = (dist, size = 40) => clamp(2 * Math.atan(size / Math.max(dist, 1)), 2.5 * DEG, 60 * DEG);
     const view = this.state === 'title' ? -1 : this.view;
+    // speed sells itself through a wider field of view: +7 deg from 300 to 600 kt
+    const rushFov = smoothstep(300 * KT, 600 * KT, ac.ias) * 7 * DEG;
     if (view === 0 || view === 1) {
       // cockpit: pilot's eye, with buffet and launch/trap shake
       this.inside = true;
@@ -586,7 +588,8 @@ class Game {
       pos = ac.toWorld([F18.eye[0] + sx * 0.03 - Math.sin(L.yaw) * 0.12, F18.eye[1] + sy * 0.03, F18.eye[2]]);
       q = qmul(ac.q, qmul(qaxis([0, 1, 0], L.yaw), qaxis([1, 0, 0], L.pitch)));
       q = qmul(q, qfromEuler(sx * 0.004, sy * 0.004, 0));
-      if (view === 0 && !this.lookingAway) { fov = 62 * DEG; shift = -0.22; } else { fov = 62 * DEG; shift = 0; }
+      fov = 62 * DEG + rushFov;
+      shift = view === 0 && !this.lookingAway ? -0.22 : 0;
     } else if (view === 2) {
       // chase: follows the flight path with a little lag
       const back = qrot(ac.q, [0, 3.6, 24]);
@@ -596,7 +599,7 @@ class Game {
       this.chasePos = vadd(vadd(this.chasePos, vscale(ac.vel, dt)), vscale(vsub(desired, vadd(this.chasePos, vscale(ac.vel, dt))), k));
       pos = this.chasePos;
       q = lookAt(pos, vadd(tgt, qrot(ac.q, [0, 1.2, -12])), qrot(ac.q, [0, 1, 0]));
-      fov = 52 * DEG;
+      fov = 52 * DEG + rushFov;
     } else if (view === 3 || view === -1) {
       const o = this.orbit;
       if (view === -1) o.yaw += dt * 0.08;
@@ -646,10 +649,18 @@ class Game {
     this.camVel = vscale(vsub(pos, cpPrev), 1 / Math.max(dt, 1e-3));
     this.camPrev = pos.slice();
   }
+  // rough air close to the ground at high dynamic pressure, 0..1: full below ~200 ft
+  // and above ~470 kt, gone by 500 ft or 290 kt. Drives camera shake and the buffet / wind audio.
+  rush() {
+    const ac = this.ac;
+    if (ac.wow || ac.state !== 'fly') return 0;
+    return (1 - smoothstep(60, 160, ac.radarAlt)) * clamp((ac.qbar - 12000) / 28000, 0, 1);
+  }
   shakeAmt() {
     const ac = this.ac;
     let s = 0;
     if (ac.state === 'stroke') s += 2.5;
+    s += this.rush() * 0.9;
     if (ac.arrest && !ac.arrest.stopped) s += 1.5;
     s += clamp((ac.alpha * RAD - 24) / 12, 0, 1) * clamp(ac.ias / 100, 0, 1) * 1.4;
     s += ac.wow ? clamp((ac.groundSpeedRel || 0) / 60, 0, 1) * 0.8 : 0;
@@ -680,7 +691,8 @@ class Game {
       dist: this.state === 'title' ? 60 : dist, doppler: dop, behind,
       gearMoving: ac.gear > 0 && ac.gear < 1,
       stall: this.warn?.stall,
-      shake: ac.state === 'stroke' ? 0.8 : (ac.arrest && !ac.arrest.stopped ? 0.6 : 0),
+      shake: ac.state === 'stroke' ? 0.8 : (ac.arrest && !ac.arrest.stopped ? 0.6 : this.rush() * 0.5),
+      rush: this.rush(),
     });
   }
 
@@ -754,7 +766,8 @@ class Game {
     const d = this.d2, p = this.perf, W = this.R.cssW;
     const c = [0.6, 1, 0.7, 0.9];
     const lines = [`FPS ${p.fps.toFixed(0)}`, `PHYSICS ${p.phys.toFixed(2)} MS`, `RENDER CPU ${p.render.toFixed(2)} MS`,
-      `DRAW CALLS ${this.R.drawCalls}`, `RES ${this.R.W}X${this.R.H} (${Math.round((this.R.resScale || 1) * 100)}%)`, `PARTICLES ${this.fx.p.length}`];
+      `DRAW CALLS ${this.R.drawCalls}`, `RES ${this.R.W}X${this.R.H} (${Math.round((this.R.resScale || 1) * 100)}%)`,
+      `UI ${this.R.ui ? this.R.uiW + 'X' + this.R.uiH : 'IN SCENE'}`, `PARTICLES ${this.fx.p.length}`];
     d.fillRect(W - 210, 50, 196, lines.length * 16 + 10, [0, 0, 0, 0.5]);
     lines.forEach((t, i) => d.text(t, W - 200, 56 + i * 16, 10, c));
   }
@@ -1105,6 +1118,6 @@ Game.prototype.debugAutoLand = function () {
     } else { ct.pitch = 0; ct.roll = 0; if (ac.wow) { ac.apc = false; this.input.throttle = 1; } }
   };
 };
-const game = new Game();
-game.init().catch((e) => { console.error(e); game.fatal('BOOT FAILURE', String(e && e.message || e)); });
+const game = new Game();   // a throw here reaches the window 'error' handler in index.html
 window.game = game;
+game.init().catch((e) => { console.error(e); game.fatal('BOOT FAILURE', String(e && e.message || e)); });

@@ -171,7 +171,7 @@ export class AudioEngine {
   }
 
   // per-frame engine/airflow update
-  // s: {N, ab, thrust, ias (m/s), alpha (deg), inside, dist, doppler, behind (0..1), gearMoving, stall, active, paused}
+  // s: {N, ab, thrust, ias (m/s), alpha (deg), inside, dist, doppler, behind (0..1), gearMoving, stall, shake, rush (0..1), active, paused}
   update(s) {
     if (!this.ready) return;
     const L = this.L;
@@ -190,7 +190,7 @@ export class AudioEngine {
     this.set(L.roar, (inside ? 0.18 + 0.35 * n * n : 0.6 * n * att * rearBoost), (0.55 + 0.55 * n) * dop, inside ? 900 : 3500);
     this.set(L.ab, (inside ? 0.45 : 1.1 * att * rearBoost) * s.ab, (0.8 + 0.25 * s.ab) * dop, inside ? 1800 : 6000);
     const sp = s.ias / 154; // 300 kt
-    this.set(L.wind, inside ? clamp(sp * sp * 0.22, 0, 0.6) : clamp(sp * 0.12 * att, 0, 0.3), 0.6 + sp * 0.5, 400 + sp * 2500);
+    this.set(L.wind, inside ? clamp(sp * sp * 0.22, 0, 0.6) + (s.rush || 0) * 0.2 : clamp(sp * 0.12 * att, 0, 0.3), 0.6 + sp * 0.5, 400 + sp * 2500);
     this.set(L.buffet, inside ? clamp((s.alpha - 24) / 12, 0, 1) * 0.6 * clamp(sp * 2, 0, 1) + (s.shake || 0) * 0.5 : 0, 0.8);
     this.set(L.motor, s.gearMoving ? (inside ? 0.12 : 0.05 * att) : 0, 1);
     this.set(L.stall, s.stall && Math.floor(performance.now() / 150) % 2 ? 0.12 : 0, s.stall ? (Math.floor(performance.now() / 150) % 2 ? 1 : 0.75) : 1, 8000, 0.01);

@@ -1,7 +1,7 @@
 {
   "type": "module",
   "scripts": {
-    "start": "python3 -m http.server 8000",
+    "start": "node tools/serve.mjs",
     "test": "node tools/fmtest.mjs && node tools/coltest.mjs"
   }
 }

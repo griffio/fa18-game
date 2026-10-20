@@ -4,6 +4,7 @@
 import { m4, m4mul, m4fromQT, m4perspective, m4ortho, m4invert, m4viewRot, vsub, qconj } from './math.js';
 
 const LOGDEPTH = `uniform float uLogC;`;
+const SL_MAX = 20000, SF_MAX = 60000;   // screen-space line segments / fill vertices per frame
 
 
 // Interceptor-style ground dot field: jittered lattice of square dots in world
@@ -172,14 +173,33 @@ void main(){
   vCol = aCol;
   gl_Position = vec4(p/uRes*2.0-1.0, 0.0, 1.0);
 }`;
-const LINE_FS = `#version 300 es
+// The composite pass's post effects, repeated for the overlay canvas so the sharp HUD
+// matches the scene under it (scanlines are sampled in scene pixels so they line up).
+const UI_POST = `
+uniform float uOCS; uniform float uScan; uniform float uSceneScale; uniform vec2 uUiRes; uniform float uFlash; uniform vec3 uFlashCol; uniform float uFade;
+vec3 uiPost(vec3 c){
+  if(uOCS > 0.5) c = floor(clamp(c,0.0,1.0)*15.0+0.5)/15.0;
+  if(uScan > 0.0){
+    float y = gl_FragCoord.y*uSceneScale;
+    float s = 0.5+0.5*cos(y*3.14159*0.5);
+    c *= 1.0 - uScan*0.18*s;
+  }
+  vec2 q = gl_FragCoord.xy/uUiRes-0.5;
+  c *= 1.0 - dot(q,q)*0.45;
+  c = mix(c, uFlashCol, uFlash);
+  return c*uFade;
+}`;
+// mode: 'world' = scene + glow attachments; 'glow' = glow attachment only (the HUD's
+// bloom halo, at scene resolution); 'ui' = the sharp overlay canvas, post effects applied
+const lineFS = (mode) => `#version 300 es
 precision highp float;
 in vec4 vCol; in vec2 vLP; in float vLen; in float vHW; in float vInvW; in float vDist; in float vThin;
 uniform float uBias; uniform float uAdd; uniform float uIntensity; uniform float uGlowK;
 ${LOGDEPTH}
 ${FOG}
+${mode === 'ui' ? UI_POST : ''}
 layout(location=0) out vec4 o;
-layout(location=1) out vec4 og;
+${mode === 'ui' ? '' : 'layout(location=1) out vec4 og;'}
 void main(){
   float a = clamp(vLP.x, 0.0, vLen);
   float dd = length(vec2(vLP.x - a, vLP.y));
@@ -189,10 +209,10 @@ void main(){
   float al = vCol.a * cov * (1.0 - f*0.97);
   vec3 c = vCol.rgb * uIntensity;
   c = mix(c, uFog, f*(1.0-uAdd));
-  o = vec4(c*al, al);
-  og = vec4(vCol.rgb*uIntensity*al*uGlowK*(1.0-f), al);
+  ${mode === 'ui' ? 'o = vec4(uiPost(c)*al, al);' : mode === 'glow' ? 'o = vec4(0.0);' : 'o = vec4(c*al, al);'}
+  ${mode === 'ui' ? '' : `og = vec4(vCol.rgb*uIntensity*al*uGlowK*(1.0-f), al);
   float w = 1.0/vInvW;
-  gl_FragDepth = log2(1.0 + w*(1.0-uBias))*uLogC;
+  gl_FragDepth = log2(1.0 + w*(1.0-uBias))*uLogC;`}
 }`;
 
 const FS_TRI_VS = `#version 300 es
@@ -274,12 +294,17 @@ layout(location=1) in vec4 aCol;
 uniform vec2 uRes;
 out vec4 vCol;
 void main(){ vCol = aCol; gl_Position = vec4(aPos.x/uRes.x*2.0-1.0, 1.0-aPos.y/uRes.y*2.0, 0.0, 1.0); }`;
-const SFILL_FS = `#version 300 es
+// 'scene' draws into the scene (no overlay canvas); 'glow' only dims the glow under
+// panels; 'ui' is the overlay canvas
+const fillFS = (mode) => `#version 300 es
 precision highp float;
 in vec4 vCol;
+${mode === 'ui' ? UI_POST : ''}
 layout(location=0) out vec4 o;
-layout(location=1) out vec4 og;
-void main(){ o = vec4(vCol.rgb*vCol.a, vCol.a); og = vec4(0.0,0.0,0.0,vCol.a); }`;
+${mode === 'ui' ? '' : 'layout(location=1) out vec4 og;'}
+void main(){
+  ${mode === 'ui' ? 'o = vec4(uiPost(vCol.rgb)*vCol.a, vCol.a);' : mode === 'glow' ? 'o = vec4(0.0); og = vec4(0.0,0.0,0.0,vCol.a);' : 'o = vec4(vCol.rgb*vCol.a, vCol.a); og = vec4(0.0,0.0,0.0,vCol.a);'}
+}`;
 
 // --- post
 const BRIGHT_FS = `#version 300 es
@@ -399,7 +424,7 @@ export const STYLES = {
 };
 
 export class Renderer {
-  constructor(canvas) {
+  constructor(canvas, uiCanvas = null) {
     this.canvas = canvas;
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, powerPreference: 'high-performance', preserveDrawingBuffer: false });
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
@@ -413,10 +438,12 @@ export class Renderer {
     gl.getExtension('OES_texture_float_linear');
     this.progMesh = program(gl, MESH_VS, MESH_FS);
     this.progTerr = program(gl, TERR_VS, TERR_FS);
-    this.progLine = program(gl, LINE_VS, LINE_FS);
+    this.progLine = program(gl, LINE_VS, lineFS('world'));
+    this.progLineGlow = program(gl, LINE_VS, lineFS('glow'));
     this.progSky = program(gl, FS_TRI_VS, SKY_FS);
     this.progSea = program(gl, SEA_VS, SEA_FS);
-    this.progSFill = program(gl, SFILL_VS, SFILL_FS);
+    this.progSFill = program(gl, SFILL_VS, fillFS('scene'));
+    this.progSFillGlow = program(gl, SFILL_VS, fillFS('glow'));
     this.progBright = program(gl, FS_TRI_VS, BRIGHT_FS);
     this.progDown = program(gl, FS_TRI_VS, DOWN_FS);
     this.progUp = program(gl, FS_TRI_VS, UP_FS);
@@ -460,7 +487,8 @@ export class Renderer {
     gl.enableVertexAttribArray(1);
     gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 24, 8);
     gl.bindVertexArray(null);
-    this.screenLines = this.createLines(null, 20000);
+    this.screenLines = this.createLines(null, SL_MAX);
+    this._initUI(uiCanvas);
 
     this.style = STYLES.hybrid;
     this.far = 250000;
@@ -480,6 +508,14 @@ export class Renderer {
     if (cw * ch * scale * scale > maxPix) scale = Math.sqrt(maxPix / (cw * ch));
     const w = Math.max(2, Math.round(cw * scale)), h = Math.max(2, Math.round(ch * scale));
     this.cssW = cw; this.cssH = ch; this.pxScale = scale;
+    if (this.uiCanvas) {
+      // the overlay follows the display (2x at most, 16 Mpixel cap) whatever the scene renders at
+      let us = dpr;
+      if (cw * ch * us * us > 16e6) us = Math.sqrt(16e6 / (cw * ch));
+      const uw = Math.max(2, Math.round(cw * us)), uh = Math.max(2, Math.round(ch * us));
+      if (this.uiCanvas.width !== uw || this.uiCanvas.height !== uh) { this.uiCanvas.width = uw; this.uiCanvas.height = uh; }
+      this.uiW = uw; this.uiH = uh; this.uiScale = us;
+    }
     if (this.canvas.width === w && this.canvas.height === h && this.fb) return;
     this.canvas.width = w; this.canvas.height = h;
     this.W = w; this.H = h;
@@ -619,6 +655,7 @@ export class Renderer {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.disable(gl.CULL_FACE);
     this.slCount = 0; this.sfCount = 0;
+    this.segments = []; this._seg = { f0: 0, l0: 0 };
     this.lineQueue = [];
     this.drawCalls = 0;
   }
@@ -757,8 +794,8 @@ export class Renderer {
   // ------------------------------------------------------------ screen-space 2D (HUD, panel)
   // coordinates in CSS pixels, origin top-left
   sline(x1, y1, x2, y2, c, w = 1.5) {
-    if (!this.slData) this.slData = new Float32Array(20000 * 11);
-    if (this.slCount >= 20000) return;
+    if (!this.slData) this.slData = new Float32Array(SL_MAX * 11);
+    if (this.slCount >= SL_MAX) return;
     const o = this.slCount * 11, d = this.slData;
     d[o] = x1; d[o + 1] = y1; d[o + 2] = 0; d[o + 3] = x2; d[o + 4] = y2; d[o + 5] = 0;
     d[o + 6] = c[0]; d[o + 7] = c[1]; d[o + 8] = c[2]; d[o + 9] = c[3] ?? 1; d[o + 10] = w;
@@ -766,11 +803,11 @@ export class Renderer {
   }
   sfill(pts, c) {
     // convex polygon fan in CSS px
-    if (!this.sfData) this.sfData = new Float32Array(60000 * 6);
+    if (!this.sfData) this.sfData = new Float32Array(SF_MAX * 6);
     const d = this.sfData;
     for (let i = 1; i < pts.length - 1; i++) {
       for (const p of [pts[0], pts[i], pts[i + 1]]) {
-        if (this.sfCount >= 60000) return;
+        if (this.sfCount >= SF_MAX) return;
         const o = this.sfCount * 6;
         d[o] = p[0]; d[o + 1] = p[1]; d[o + 2] = c[0]; d[o + 3] = c[1]; d[o + 4] = c[2]; d[o + 5] = c[3] ?? 1;
         this.sfCount++;
@@ -779,25 +816,39 @@ export class Renderer {
   }
   srect(x, y, w, h, c) { this.sfill([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], c); }
 
+  // Segment barrier: everything queued so far sits under whatever is queued next (the
+  // pause menu over the HUD). With the overlay canvas the segment goes into the scene's
+  // glow buffer now, for the bloom halo, and is drawn sharp at the end of the frame;
+  // without one it is drawn straight into the scene here.
   flushScreen() {
+    const seg = this._seg;
+    const s = { f0: seg.f0, f1: this.sfCount, l0: seg.l0, l1: this.slCount };
+    seg.f0 = this.sfCount; seg.l0 = this.slCount;
+    this.segments.push(s);
+    this._drawScreenSegment(s, this.ui ? 'glow' : 'scene');
+  }
+  _drawScreenSegment(s, mode) {
     const gl = this.gl;
+    const nf = s.f1 - s.f0, nl = s.l1 - s.l0;
+    if (!nf && !nl) return;
     gl.disable(gl.DEPTH_TEST);
     gl.depthMask(false);
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
-    if (this.sfCount) {
-      const { p, u } = this.progSFill;
+    if (nf) {
+      const { p, u } = mode === 'glow' ? this.progSFillGlow : this.progSFill;
       gl.useProgram(p);
       gl.uniform2f(u.uRes, this.cssW, this.cssH);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.sfillBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, this.sfData.subarray(0, this.sfCount * 6), gl.DYNAMIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, this.sfData.subarray(s.f0 * 6, s.f1 * 6), gl.DYNAMIC_DRAW);
       gl.bindVertexArray(this.sfillVao);
-      gl.drawArrays(gl.TRIANGLES, 0, this.sfCount);
+      gl.drawArrays(gl.TRIANGLES, 0, nf);
     }
     gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
-    if (this.slCount) {
-      this.updateLines(this.screenLines, this.slData, this.slCount);
-      const { p, u } = this.progLine;
+    if (nl) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.screenLines.buf);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.slData, s.l0 * 11, nl * 11);
+      const { p, u } = mode === 'glow' ? this.progLineGlow : this.progLine;
       gl.useProgram(p);
       const ortho = m4ortho(0, this.cssW, this.cssH, 0);
       gl.uniformMatrix4fv(u.uModel, false, m4());
@@ -815,10 +866,103 @@ export class Renderer {
       gl.uniform1f(u.uFogDen, 0);
       gl.uniform3fv(u.uFog, [0, 0, 0]);
       gl.bindVertexArray(this.screenLines.vao);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.screenLines.count);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, nl);
     }
-    this.slCount = 0; this.sfCount = 0;
     gl.depthMask(true);
+  }
+
+  // ------------------------------------------------------------ overlay canvas
+  // The HUD, text and panels are drawn on a second, transparent canvas at the display's
+  // full resolution, over the scene canvas. The scene can then render at whatever size
+  // the GPU affords (and the dynamic resolution picks) while the text stays sharp.
+  _initUI(c) {
+    this.uiCanvas = c;
+    this.ui = null;
+    if (!c) return;
+    const g = c.getContext('webgl2', { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, preserveDrawingBuffer: false });
+    if (!g) return;
+    c.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; if (this.onLost) this.onLost(); });
+    c.addEventListener('webglcontextrestored', () => { if (this.onRestored) this.onRestored(); });
+    const ui = { gl: g, progLine: program(g, LINE_VS, lineFS('ui')), progFill: program(g, SFILL_VS, fillFS('ui')) };
+    const corner = g.createBuffer();
+    g.bindBuffer(g.ARRAY_BUFFER, corner);
+    g.bufferData(g.ARRAY_BUFFER, new Float32Array([0, -1, 0, 1, 1, -1, 1, 1]), g.STATIC_DRAW);
+    ui.lineVao = g.createVertexArray();
+    g.bindVertexArray(ui.lineVao);
+    g.enableVertexAttribArray(0);
+    g.vertexAttribPointer(0, 2, g.FLOAT, false, 0, 0);
+    ui.lineBuf = g.createBuffer();
+    g.bindBuffer(g.ARRAY_BUFFER, ui.lineBuf);
+    g.bufferData(g.ARRAY_BUFFER, SL_MAX * 44, g.DYNAMIC_DRAW);
+    for (const [loc, size, off] of [[1, 3, 0], [2, 3, 12], [3, 4, 24], [4, 1, 40]]) {
+      g.enableVertexAttribArray(loc);
+      g.vertexAttribPointer(loc, size, g.FLOAT, false, 44, off);
+      g.vertexAttribDivisor(loc, 1);
+    }
+    ui.fillVao = g.createVertexArray();
+    g.bindVertexArray(ui.fillVao);
+    ui.fillBuf = g.createBuffer();
+    g.bindBuffer(g.ARRAY_BUFFER, ui.fillBuf);
+    g.bufferData(g.ARRAY_BUFFER, SF_MAX * 24, g.DYNAMIC_DRAW);
+    g.enableVertexAttribArray(0);
+    g.vertexAttribPointer(0, 2, g.FLOAT, false, 24, 0);
+    g.enableVertexAttribArray(1);
+    g.vertexAttribPointer(1, 4, g.FLOAT, false, 24, 8);
+    g.bindVertexArray(null);
+    this.ui = ui;
+  }
+  _drawUI() {
+    const ui = this.ui, g = ui.gl, s = this.style;
+    g.viewport(0, 0, this.uiW, this.uiH);
+    g.clearColor(0, 0, 0, 0);
+    g.clear(g.COLOR_BUFFER_BIT);
+    g.disable(g.DEPTH_TEST);
+    g.enable(g.BLEND);
+    g.blendFuncSeparate(g.ONE, g.ONE_MINUS_SRC_ALPHA, g.ONE, g.ONE_MINUS_SRC_ALPHA);
+    const post = (u) => {
+      g.uniform1f(u.uOCS, s.ocs ? 1 : 0);
+      g.uniform1f(u.uScan, this.scanlines ? s.scan : 0);
+      g.uniform1f(u.uSceneScale, this.H / this.uiH);
+      g.uniform2f(u.uUiRes, this.uiW, this.uiH);
+      g.uniform1f(u.uFlash, this.flash);
+      g.uniform3fv(u.uFlashCol, this.flashCol);
+      g.uniform1f(u.uFade, this.fade);
+    };
+    const ortho = m4ortho(0, this.cssW, this.cssH, 0);
+    for (const seg of this.segments) {
+      const nf = seg.f1 - seg.f0, nl = seg.l1 - seg.l0;
+      if (nf) {
+        const { p, u } = ui.progFill;
+        g.useProgram(p);
+        g.uniform2f(u.uRes, this.cssW, this.cssH);
+        post(u);
+        g.bindBuffer(g.ARRAY_BUFFER, ui.fillBuf);
+        g.bufferSubData(g.ARRAY_BUFFER, 0, this.sfData, seg.f0 * 6, nf * 6);
+        g.bindVertexArray(ui.fillVao);
+        g.drawArrays(g.TRIANGLES, 0, nf);
+      }
+      if (nl) {
+        const { p, u } = ui.progLine;
+        g.useProgram(p);
+        g.uniformMatrix4fv(u.uModel, false, m4());
+        g.uniformMatrix4fv(u.uVP, false, ortho);
+        g.uniform2f(u.uRes, this.uiW, this.uiH);
+        g.uniform1f(u.uWScale, this.uiScale);
+        g.uniform1f(u.uNear, -10);
+        g.uniform1f(u.uDetailFar, 1e9);
+        g.uniform1f(u.uMinW, 0);
+        g.uniform1f(u.uAdd, 0);
+        g.uniform1f(u.uIntensity, 1);
+        g.uniform1f(u.uFogDen, 0);
+        g.uniform3fv(u.uFog, [0, 0, 0]);
+        post(u);
+        g.bindBuffer(g.ARRAY_BUFFER, ui.lineBuf);
+        g.bufferSubData(g.ARRAY_BUFFER, 0, this.slData, seg.l0 * 11, nl * 11);
+        g.bindVertexArray(ui.lineVao);
+        g.drawArraysInstanced(g.TRIANGLE_STRIP, 0, 4, nl);
+      }
+    }
+    g.bindVertexArray(null);
   }
 
   // ------------------------------------------------------------ post
@@ -873,6 +1017,7 @@ export class Renderer {
       gl.uniform1f(u.uFade, this.fade);
       gl.activeTexture(gl.TEXTURE0);
     });
+    if (this.ui) this._drawUI();
   }
 
   // project a world-space point to CSS pixel coords (null if behind)

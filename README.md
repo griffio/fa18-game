@@ -21,9 +21,16 @@ ES modules need to be served over HTTP (not `file://`):
 
 ```sh
 cd fa18-game
-python3 -m http.server 8000      # or: npx serve .
-# open http://localhost:8000
+npm start                        # node tools/serve.mjs: http://localhost:8000 with caching off
+# or any static server: python3 -m http.server 8000, npx serve .
 ```
+
+If you serve several projects from the same `localhost:8000` in turn, the browser can keep the
+other project's cached modules (a plain `python3 -m http.server` answers 304 for any file older
+than the cached copy) and the game stops on the loading screen with an import error.
+`tools/serve.mjs` sends `Cache-Control: no-store` so that cannot happen; with another server,
+hard-reload (Shift+reload) once. `npm start -- --host 0.0.0.0` makes it reachable from an iPad on
+the same network.
 
 Click to "insert the disk" (this also unlocks audio), pick a start point with the arrow keys
 (CVN-68's catapult or NAS Moffett Field runway 32R), then press **Enter** to fly.

@@ -34,7 +34,27 @@
 </head>
 <body>
 <canvas id="gl"></canvas>
+<canvas id="ui"></canvas>
 <div id="loading"><div class="logo">F/A-18 INTERCEPTOR</div><div class="msg">LOADING</div><div class="bar"></div></div>
+<script>
+// Anything that goes wrong before the game can report it (a module that fails to load or
+// parse, an error while constructing the game) lands on the loading screen instead of
+// leaving it stuck. A slow load says so too, so a frozen message means the page itself is stuck.
+(function () {
+  var L = document.getElementById('loading');
+  var up = function () { return L && L.style.display !== 'none'; };
+  var show = function (msg) {
+    if (!up()) return;
+    L.querySelector('.logo').textContent = 'BOOT FAILURE';
+    L.querySelector('.msg').textContent = msg;
+  };
+  window.addEventListener('error', function (e) {
+    show((e.message || 'script error') + (e.filename ? '  [' + e.filename.split('/').pop() + ':' + e.lineno + ']' : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) { show(String(e.reason && e.reason.message || e.reason)); });
+  setTimeout(function () { if (up() && !/FAILURE/.test(L.textContent)) L.querySelector('.msg').textContent += '  -  TAKING TOO LONG: CHECK THE BROWSER CONSOLE'; }, 15000);
+})();
+</script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>
